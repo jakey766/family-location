@@ -1,0 +1,10 @@
+/.cache/
+/bin/
+/data/
+/logs/
+/secrets/
+/.env
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
