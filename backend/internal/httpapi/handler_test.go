@@ -71,7 +71,7 @@ func TestRouting(t *testing.T) {
 		method, path string
 		code         int
 	}{
-		{"POST", "/healthz", 405}, {"POST", "/readyz", 405}, {"GET", "/", 404},
+		{"POST", "/healthz", 405}, {"POST", "/readyz", 405}, {"GET", "/", 200},
 		{"GET", "/readyz/extra", 404}, {"HEAD", "/healthz", 200}, {"HEAD", "/readyz", 200},
 	} {
 		r := httptest.NewRecorder()

@@ -14,6 +14,7 @@ import (
 
 	"family-location/backend/internal/config"
 	"family-location/backend/internal/httpapi"
+	"family-location/backend/internal/location"
 	"family-location/backend/internal/storage"
 )
 
@@ -55,13 +56,23 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer db.Close()
+	cleanupCtx, stopCleanup := context.WithCancel(ctx)
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		location.New(db).RunCleanup(cleanupCtx, func() { logger.Error("expired location cleanup failed") })
+	}()
+	defer func() {
+		stopCleanup()
+		<-cleanupDone
+	}()
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 	server := &http.Server{
-		Handler:           httpapi.New(db),
+		Handler:           httpapi.NewWithWebConfig(db, httpapi.WebConfig{AMapJSKey: cfg.AMapJSKey, AMapSecurityJSCode: cfg.AMapSecurityJSCode}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

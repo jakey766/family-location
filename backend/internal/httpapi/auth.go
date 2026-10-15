@@ -128,22 +128,29 @@ func (a *authAPI) revokeDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *authAPI) deviceMe(w http.ResponseWriter, r *http.Request) {
+	device, ok := a.device(w, r)
+	if ok {
+		writeJSON(w, r, 200, map[string]any{"device": device})
+	}
+}
+
+func (a *authAPI) device(w http.ResponseWriter, r *http.Request) (auth.Device, bool) {
 	values := r.Header.Values("Authorization")
 	if len(values) != 1 {
 		apiError(w, r, 401, "unauthorized")
-		return
+		return auth.Device{}, false
 	}
 	parts := strings.Fields(values[0])
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		apiError(w, r, 401, "unauthorized")
-		return
+		return auth.Device{}, false
 	}
 	device, err := a.service.AuthenticateDevice(r.Context(), parts[1])
 	if err != nil {
 		authError(w, r, err)
-		return
+		return auth.Device{}, false
 	}
-	writeJSON(w, r, 200, map[string]any{"device": device})
+	return device, true
 }
 
 func (a *authAPI) admin(w http.ResponseWriter, r *http.Request, mutation bool) (auth.Session, bool) {

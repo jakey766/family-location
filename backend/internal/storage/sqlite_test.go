@@ -17,7 +17,7 @@ func TestPersistenceAndMigration(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 	var version, count int
-	if err := db.QueryRow("SELECT MAX(version), COUNT(*) FROM schema_migrations").Scan(&version, &count); err != nil || version != 2 || count != 2 {
+	if err := db.QueryRow("SELECT MAX(version), COUNT(*) FROM schema_migrations").Scan(&version, &count); err != nil || version != SchemaVersion || count != SchemaVersion {
 		t.Fatalf("migration version=%d count=%d err=%v", version, count, err)
 	}
 	if _, err := db.Exec("CREATE TABLE persistence_test (value TEXT); INSERT INTO persistence_test VALUES ('kept')"); err != nil {
@@ -34,7 +34,7 @@ func TestPersistenceAndMigration(t *testing.T) {
 	if err := db.QueryRow("SELECT value FROM persistence_test").Scan(&value); err != nil || value != "kept" {
 		t.Fatalf("persistent value=%q err=%v", value, err)
 	}
-	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil || count != 2 {
+	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil || count != SchemaVersion {
 		t.Fatalf("repeated migration count=%d err=%v", count, err)
 	}
 	info, err := os.Stat(path)

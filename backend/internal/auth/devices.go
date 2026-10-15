@@ -140,7 +140,12 @@ func (s *Service) RevokeDevice(ctx context.Context, a Admin, id string) error {
 	if err := s.authorizeAdmin(ctx, a); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, "UPDATE devices SET revoked_at=COALESCE(revoked_at,?) WHERE id=? AND family_id=?", s.now().Unix(), id, a.FamilyID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin device revocation: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "UPDATE devices SET revoked_at=COALESCE(revoked_at,?),sharing_session_id=NULL,last_sequence=0,last_captured_at=NULL WHERE id=? AND family_id=?", s.now().Unix(), id, a.FamilyID)
 	if err != nil {
 		return fmt.Errorf("revoke device: %w", err)
 	}
@@ -151,7 +156,10 @@ func (s *Service) RevokeDevice(ctx context.Context, a Admin, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, "DELETE FROM latest_locations WHERE device_id=?", id); err != nil {
+		return fmt.Errorf("delete revoked location: %w", err)
+	}
+	return tx.Commit()
 }
 func (s *Service) AuthenticateDevice(ctx context.Context, token string) (Device, error) {
 	if len(token) != 43 {

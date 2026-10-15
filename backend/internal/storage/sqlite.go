@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Open initializes a persistent database. Only one process should own this file.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
@@ -92,6 +92,11 @@ func migrate(ctx context.Context, db *sql.DB) error {
 				return fmt.Errorf("migration %d: %w", next, err)
 			}
 		}
+		if next == 3 {
+			if _, err := tx.ExecContext(ctx, locationSchema); err != nil {
+				return fmt.Errorf("migration %d: %w", next, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", next); err != nil {
 			return err
 		}
@@ -129,4 +134,23 @@ CREATE TABLE auth_limits (
  key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL CHECK(count > 0)
 );
 CREATE INDEX auth_limits_window ON auth_limits(window_start);
+`
+
+// Location times are Unix milliseconds. Sequence watermarks live on devices so
+// deleting expired locations cannot allow an older upload to restore them.
+const locationSchema = `
+ALTER TABLE devices ADD COLUMN sharing_session_id TEXT NULL;
+ALTER TABLE devices ADD COLUMN last_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_sequence >= 0);
+ALTER TABLE devices ADD COLUMN last_captured_at INTEGER NULL;
+CREATE TABLE latest_locations (
+ device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+ latitude REAL NOT NULL CHECK(latitude BETWEEN -90 AND 90),
+ longitude REAL NOT NULL CHECK(longitude BETWEEN -180 AND 180),
+ accuracy_m REAL NOT NULL CHECK(accuracy_m >= 0),
+ battery_percent INTEGER NULL CHECK(battery_percent BETWEEN 0 AND 100),
+ captured_at INTEGER NOT NULL,
+ received_at INTEGER NOT NULL,
+ lease_expires_at INTEGER NOT NULL
+);
+CREATE INDEX latest_locations_expiry ON latest_locations(lease_expires_at);
 `
