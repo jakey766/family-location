@@ -1,6 +1,6 @@
 # 网页使用、地图配置与验收
 
-第四步已实现同源网页，包含登录/退出、家人位置列表、设备配对/撤销、高德地图适配及降级。当前未配置真实高德 Key，未完成 iPhone Safari 真机验收；实际检查结果见 [PROGRESS.md](PROGRESS.md)。安卓 App 尚未实现，因此当前先用隔离模拟设备验证页面。
+第四步已实现同源网页，包含登录/退出、家人位置列表、设备配对/撤销、高德地图适配及降级。安卓 App 已交付；2026-10-18 用户反馈空地图正常、有设备位置后异常，已修正 Marker 方法名错误待复测。真实高德完整交互和 iPhone Safari 真机验收仍未完成，实际检查结果见 [PROGRESS.md](PROGRESS.md)。
 
 ## 启动和访问
 
@@ -69,6 +69,12 @@ make run
 实现使用高德 JS API 2.0 和 `window._AMapSecurityConfig.serviceHost`，安全密钥通过 Go 的 `/_AMapService/` 代理追加，符合[官方代理方案](https://lbs.amap.com/api/javascript-api-v2/guide/abc/jscode)。代理要求管理员登录，只访问固定高德 HTTPS 目标，不转发会话 Cookie/Authorization；配置接口 `GET /api/v1/web-config` 也需要管理员会话。
 
 配置后重新启动并刷新网页，在实际访问来源验证 Key 权限、域名白名单与网络连通性。如果提示地图不可用，先核对 Key 平台、配套密钥、可用配额及访问来源；域名配置问题参考[高德 INVALID_USER_DOMAIN 说明](https://lbs.amap.com/faq/js-api/map-js-api/create-project/46515)。真实 Key、白名单、地图瓦片与手机网络尚未验证，不能根据 SDK 替身测试认定这些已可用。
+
+## 添加设备位置后报错（2026-10-18 修正）
+
+若空地图正常，有位置后先提示“地图配置暂时无法读取”，下一轮刷新又提示“未能确认家人的共享状态”并清空列表，旧版代码存在 Marker 层级方法名错误：调用了 `setZIndex`，而[高德 JS API 2.0 Marker](https://a.amap.com/jsapi/static/doc/index.html#amapmarker) 提供的是 `setzIndex`。异常发生在位置渲染期间，落入配置或刷新请求的错误处理，提示文字并不能证明配置或网络有问题。
+
+修正版已更正方法名并补充回归。网页嵌入 Go 二进制，需要更新运行环境中的源码、重新构建并重启服务，本地用 `make run`，服务器按 [部署更新步骤](DEPLOYMENT.md) 操作。刷新浏览器后，确认有位置的设备能显示、点击家人/查看全部可用，并等待至少两轮自动刷新（约 20 秒）检查列表仍正常。本地自动测试未验证真实瓦片加载；若底图仍空白，需要继续检查浏览器 Console/Network 的实际错误。
 
 ## 自动化验证
 

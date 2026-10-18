@@ -27,7 +27,9 @@ function setup() {
     on(name, fn) {
       if (name === "complete") queueMicrotask(fn);
     }
-    setFitView() {}
+    setFitView(markers) {
+      this.fittedMarkers = markers;
+    }
     setZoomAndCenter(z, pos) {
       this.center = pos;
     }
@@ -49,7 +51,11 @@ function setup() {
     setContent(v) {
       this.opts.content = v;
     }
-    setZIndex() {}
+    // AMap JS API 2.0 uses a lowercase z (unlike its layer API).
+    // https://a.amap.com/jsapi/static/doc/index.html#amapmarker
+    setzIndex(value) {
+      this.opts.zIndex = value;
+    }
   }
   class Circle {
     constructor(opts) {
@@ -124,4 +130,27 @@ test("late SDK response after logout cannot create map", async () => {
   });
   await pending;
   assert.equal(created, 0);
+});
+test("adding a location after an empty map fits it and survives subsequent updates", async (t) => {
+  const f = setup();
+  t.after(() => f.view.destroy());
+  await f.view.configure({ enabled: true, key: "test" });
+  f.view.update([], null, at);
+  assert.equal(f.overlays.size, 0);
+
+  f.view.update([p], null, at);
+  const marker = [...f.overlays].find((overlay) => overlay.opts.position);
+  assert.equal(marker.opts.zIndex, 100);
+  assert.deepEqual(f.maps[0].fittedMarkers, [marker]);
+
+  const updated = { ...p, longitude: 121, accuracy_m: 30 };
+  f.view.update([updated], "a", at + 10000);
+  assert.equal(f.overlays.size, 2);
+  assert.deepEqual(marker.opts.position, [121, 30]);
+  assert.equal(marker.opts.zIndex, 200);
+  f.view.focus("a");
+  assert.deepEqual(f.maps[0].center, [121, 30]);
+  f.view.update([updated], null, at + 20000);
+  assert.equal(marker.opts.zIndex, 100);
+  assert.equal(f.statuses.at(-1), "ready");
 });

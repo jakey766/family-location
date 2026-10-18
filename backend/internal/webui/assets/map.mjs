@@ -141,7 +141,7 @@ export function createMapView(container, onStatus, onSelect, options = {}) {
         entry.circle.setOptions({ strokeColor: color, fillColor: color });
         entry.point = point;
       }
-      entry.marker.setZIndex(selected === point.device_id ? 200 : 100);
+      entry.marker.setzIndex(selected === point.device_id ? 200 : 100);
     }
     if (!points.size) fitPending = true;
     if (fitPending && points.size) {

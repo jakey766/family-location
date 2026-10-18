@@ -4,6 +4,8 @@
 
 ## 当前状态
 
+2026-10-18（网页添加设备后异常）：用户反馈无设备时地图正常，有设备位置后先提示“地图配置暂时无法读取”，随后提示共享状态无法确认并清空位置。已发现并修正高德 Marker 方法名大小写错误：`setZIndex` 改为官方 JS API 2.0 的 `setzIndex`。原 SDK 替身重复了错误方法名，现已修正，并覆盖空地图添加位置、自动取景、后续位置更新及选择层级。修正前两个用例报 `setZIndex is not a function`，修正后 8 项前端测试、`make web-smoke` 和 `make test` 均通过。尚未更新用户运行的服务，真实高德底图及设备页面需重新构建、重启后复测。
+
 2026-10-18（vivo 界面反馈）：用户已在 vivo X9 / Android 7.1.2 安装打开 0.5.0，提供截图并确认正常打开/滚动也会文字残影、黑底。已生成 0.5.1（versionCode 2）正式兼容包：API 25 主界面软件绘制、滚动视图不透明背景、仅变化时更新文字；Robolectric API 25/33 六项页面测试和原有 28 项测试均通过，Release lint 零问题，签名与已有发布证书一致。便于传输的副本位于 `bin/family-location-0.5.1-release.apk`。截图症状指向绘制兼容问题，但尚未在本机复现 vivo GPU 行为；新包需要用户真机复测，不能记录为界面已验收。
 
 2026-10-18：第五步安卓客户端代码已实现，新增 `android/`（`com.jk.family`，minSdk 25、targetSdk 35），包括配对、主动启停、隐私授权、前台服务、高德适配、30/180 秒策略、离线最新点及 Keystore 凭证。28 项 JVM 测试、Kotlin 客户端与真实隔离后端联调、Debug APK 构建及零问题 Android lint 均通过。用户确认 Android Key 与发布签名已有；发现项目内已有 `secrets/android/release.jks` 和 `debug.jks`，未重新生成或覆盖。用户已补齐两份本地配置；签名配置原文件名 `secrets/signing.properties` 已更正为构建使用的 `secrets/android-signing.properties`，没有改动其配置内容。`make android-release` 已成功生成正式签名 APK，签名校验通过且证书与配置的发布签名库一致；已确认 Key 打包、包名/minSdk/targetSdk 正确、APK 不可调试。真实高德、三台安卓、iPhone 和公网链路仍未验收。
@@ -175,13 +177,13 @@ curl -i http://127.0.0.1:8080/readyz
 
 - 位置后端已完成自动验证；用户正式数据库上的手动共享流程尚未确认，没有真实安卓采集位置。
 - Kotlin App、高德适配、共享启停和后台策略代码已实现，Debug 和正式签名 APK 均已构建，已有 Android Key/发布签名已配置；真实 SDK/硬件/权限/后台/耗电尚未验收。
-- 网页上述功能代码已实现，但高德真实 Key、iPhone Safari 窄屏/触控/后台恢复和完整浏览器交互尚未验收；用户当前未申请 Web JS API Key。
+- 网页上述功能代码已实现；2026-10-18 用户反馈空地图可显示、加入设备位置后异常，已修正 Marker 方法名错误待复测。真实高德完整交互、iPhone Safari 窄屏/触控/后台恢复尚未验收。
 - vivo X9（Android 7.1.2）已收到安装/打开后的界面异常反馈，0.5.1 兼容处理待用户复测；Mi 11 Lite、Redmi Note 13 Pro（均 Android 13）尚未进行本项目真机验证。三台的 30 秒／3 分钟效果、耗电和后台稳定性均尚无实测结论。
 - 公网服务器部署、HTTP/IP 端到端联调未执行；HTTPS 按已确认范围留待后续。
 
 ## 下一步
 
-第五步安卓代码和正式签名 APK 已交付，先在 vivo X9 覆盖安装 0.5.1 复测界面，再按计划验收其他功能。安装 `android/app/build/outputs/apk/release/app-release.apk`，按 [ANDROID.md](ANDROID.md) 分别验证三台设备，随后进行第六步公网部署联调。网页同时保留待验收事项：用户申请 Web JS API Key 并配置后检查真实地图，使用 iPhone Safari 验证布局、触控、复制与生命周期；不能把这些待验收事项默认为已通过。
+第五步安卓代码和正式签名 APK 已交付，先在 vivo X9 覆盖安装 0.5.1 复测界面，再按计划验收其他功能。安装 `android/app/build/outputs/apk/release/app-release.apk`，按 [ANDROID.md](ANDROID.md) 分别验证三台设备，随后进行第六步公网部署联调。网页先重新构建并重启运行服务，刷新页面，确认有设备位置时地图及列表在多轮自动刷新后仍正常；继续使用 iPhone Safari 验证布局、触控、复制与生命周期，不能把这些待验收事项默认为已通过。
 
 后续阶段交付与验收：
 
