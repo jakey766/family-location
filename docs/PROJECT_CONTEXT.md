@@ -1,6 +1,6 @@
 # 项目上下文：家庭位置共享
 
-更新日期：2026-10-15。
+更新日期：2026-10-18。
 
 本文件记录用户已确认的目标、需求和工作约定；技术实现细节引用[设计文档](superpowers/specs/2026-10-10-family-location-design.md)，实际完成状态以 [PROGRESS.md](PROGRESS.md) 为准。后续需求调整先更新本文件，再同步受影响的设计与计划，避免多份文档形成不同口径。设计中的具体阈值、协议细节和参数属于实施方案，不等同于已实现或已经真机验证。
 
@@ -11,7 +11,7 @@
 ## 已确认方案
 
 - 安卓：Kotlin + 高德定位 SDK；签名 APK 直接安装，不上架应用市场。
-- 安卓包名确定为 `com.jk.family`；后续工程的 applicationId、namespace 及高德 Android Key 的 Package 保持一致。当前尚未创建安卓工程，此处记录选定值，不代表已配置或已生成签名证书。
+- 安卓包名确定为 `com.jk.family`；第五步工程的 applicationId、namespace 及高德 Android Key 的 Package 保持一致。2026-10-18 用户确认 Android Key 和发布签名均已有，发现项目内已有签名库，沿用原签名；构建配置与实际签名结果见 [ANDROID.md](ANDROID.md) 和进度，不在文档记录密钥/密码。
 - 后端：Go + SQLite。
 - 查看端：适配 iPhone Safari 的网页，使用高德地图。2026-10-15 用户确认尚未申请 Web JS API Key，先实现页面、地图未配置降级和配置说明；真实地图与 iPhone 验收单独记录，不阻塞无 Key 的页面实现。
 - 后续顺序已于 2026-10-13 确认：第三步位置后端 → 第四步 iPhone 网页 → 第五步安卓 App → 第六步部署联调。网页提前到安卓开发之前；网页阶段用独立测试设备和模拟位置验证，不冒充真实手机上报。
@@ -48,6 +48,7 @@
 - [整体设计](superpowers/specs/2026-10-10-family-location-design.md)：架构、Android 兼容、定位策略、鉴权配对、最新位置协议及 HTTP 限制。
 - [分阶段实施计划](superpowers/plans/2026-10-10-family-location-plan.md)：第一步执行清单与后续路线。
 - [网页使用与地图配置](WEB_UI.md)：第四步页面入口、可选高德配置、测试和真机验收边界。
+- [Android 使用与验收](ANDROID.md)：第五步构建、Key/已有签名配置、安装配对、主动共享与三台设备独立验收。
 - [位置接口与模拟工具](LOCATION_API.md)：第三步实现的接口、时间语义和隔离测试入口；不代表客户端真机已验收。
 - [真实进度](PROGRESS.md)：完成项、测试依据、未完成项和下一步。
 - [服务器部署](DEPLOYMENT.md)：服务器 Go 构建、正式账号、systemd 托管、配置/日志及更新排错；不是实际部署完成记录。

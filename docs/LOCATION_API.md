@@ -1,6 +1,6 @@
 # 位置共享 API（第三步）
 
-已实现 Go + SQLite 位置后端，第四步网页已实现，安卓客户端尚未实现。启动服务使用 `make run`；已有管理员不需要再次初始化，旧 v1/v2 数据库自动升级至 v3。认证、登录和设备配对见 [AUTH_API.md](AUTH_API.md)，技术边界见[第三步设计](superpowers/specs/2026-10-15-location-design.md)。
+已实现 Go + SQLite 位置后端、第四步网页和第五步安卓客户端代码；安卓三台真机尚未验收。启动服务使用 `make run`；已有管理员不需要再次初始化，旧 v1/v2 数据库自动升级至 v3。认证、登录和设备配对见 [AUTH_API.md](AUTH_API.md)，技术边界见[第三步设计](superpowers/specs/2026-10-15-location-design.md)。
 
 ## 不影响正式数据的验证
 

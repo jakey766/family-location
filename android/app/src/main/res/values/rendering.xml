@@ -1,0 +1,6 @@
+<resources>
+    <!-- API 25 compatibility path for the reported vivo X9 drawing corruption.
+         A framework test checks the selected mode; the actual driver needs device retesting. -->
+    <bool name="main_activity_hardware_accelerated">false</bool>
+    <color name="page_background">#F5F7F5</color>
+</resources>

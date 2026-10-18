@@ -79,6 +79,6 @@ make auth-smoke
 
 `auth-smoke` 在项目内临时库中生成临时测试账户、会话及设备，只在内存中使用测试凭证，不打印或写入文档；验证 v1→v3、初始化、登录/CSRF、一次性配对、权限隔离、重启、设备撤销和注销，结束回收子进程及临时文件，不操作正式数据库。该脚本在 macOS/Linux 运行，还会使用 PTY 检查密码输入处被 SIGINT/SIGTERM 中断后终端属性正常恢复。
 
-位置后端和网页代码已实现，实际验证边界见 [PROGRESS.md](PROGRESS.md)，后续继续安卓 App。
+位置后端、网页和安卓客户端代码已实现，实际验证边界见 [PROGRESS.md](PROGRESS.md)；安卓配置和真机验收见 [ANDROID.md](ANDROID.md)。
 
 汪汪

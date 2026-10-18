@@ -1,0 +1,82 @@
+package com.jk.family
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.BatteryManager
+import android.os.Handler
+import android.os.Looper
+import com.amap.api.location.AMapLocationClient
+import com.amap.api.location.AMapLocationClientOption
+import com.jk.family.core.Fix
+
+internal class AmapSource(private val context: Context) : PositionSource {
+    private var client: AMapLocationClient? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var generation = 0
+    private var currentInterval = 30_000L
+
+    override fun start(onFix: (Fix) -> Unit, onError: (String) -> Unit) {
+        check(CredentialStore(context).consent && hasLocationPermission(context))
+        // No SDK object is constructed before explicit privacy consent.
+        AMapLocationClient.updatePrivacyShow(context, true, true)
+        AMapLocationClient.updatePrivacyAgree(context, true)
+        val epoch = ++generation
+        val created = AMapLocationClient(context)
+        client = created
+        currentInterval = 30_000L
+        created.setLocationOption(options())
+        created.setLocationListener { location ->
+            // Copy data while in the SDK callback; do not keep a mutable SDK location.
+            val fix = if (location != null && location.errorCode == 0 && location.coordType == "GCJ02") {
+                Fix(location.latitude, location.longitude, location.accuracy.toDouble(), location.time,
+                    battery(), if (location.hasSpeed()) location.speed else 0f)
+            } else null
+            val code = location?.errorCode ?: -1
+            handler.post {
+                if (generation != epoch || client == null) return@post
+                if (fix != null) onFix(fix)
+                else onError("定位暂不可用（代码 $code），等待下一次定位；请检查系统定位和高德配置")
+            }
+        }
+        created.startLocation()
+    }
+
+    override fun interval(millis: Long) {
+        if (currentInterval == millis) return
+        currentInterval = millis
+        client?.setLocationOption(options())
+    }
+
+    private fun options() = AMapLocationClientOption().apply {
+        locationMode = AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
+        interval = currentInterval
+        isOnceLocation = false
+        isNeedAddress = false
+        isOffset = true
+        isLocationCacheEnable = false
+        isMockEnable = false
+    }
+
+    override fun stop() {
+        generation++
+        val old = client
+        client = null
+        handler.removeCallbacksAndMessages(null)
+        try { old?.stopLocation() } finally { old?.onDestroy() }
+    }
+
+    private fun battery(): Int? {
+        val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return null
+        val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        return if (level >= 0 && scale > 0) (level * 100 / scale).coerceIn(0, 100) else null
+    }
+
+    companion object {
+        fun hasLocationPermission(context: Context) = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    }
+}

@@ -238,6 +238,27 @@ curl -fsS http://127.0.0.1:8080/readyz
 | 地图尚未配置 | 可正常使用管理和文字列表；在服务器环境文件中补齐两项高德配置并重启 |
 | 修改源码后页面没变化 | 网页在编译时嵌入，须 `make build` 并重启；确认浏览器访问的端口确实属于更新后的实例 |
 
+### GOPROXY 非空但没有有效条目
+
+若构建报 `GOPROXY list is not the empty string, but contains no entries`，表示服务器实际生效的 GOPROXY 配置被解析为空列表，例如值只有逗号或空白。项目 Makefile 没有设置 GOPROXY，会继承当前服务器环境及 Go 用户配置；具体来源尚需在服务器核对。
+
+在**出现错误的服务器终端**执行，覆盖当前 shell 的配置后重试：
+
+```bash
+cd /opt/family-location
+export GOPROXY=https://proxy.golang.org,direct
+make build && chmod 0755 bin bin/family-location
+```
+
+如果官方代理连接超时，可按服务器网络条件选择 [Goproxy.cn](https://goproxy.cn/) 提供的代理，然后重新构建：
+
+```bash
+export GOPROXY=https://goproxy.cn,direct
+make build && chmod 0755 bin bin/family-location
+```
+
+以上 export 仅对当前终端及其子进程生效。确认可下载后，如需新终端也生效，可在服务器修正 shell 启动文件中原有的错误 GOPROXY 设置，或清除该环境变量后使用 `go env -w` 保存选定代理。shell 环境变量优先于 Go 用户配置，仅执行 `go env -w` 不一定能覆盖现有错误的 export。代理格式和配置规则见 [Go 模块参考](https://go.dev/ref/mod#environment-variables)。该错误不需要删除数据库、修改依赖版本或关闭校验和验证。
+
 ## 部署验收记录
 
 部署后应分别确认：服务器 Go 构建成功、systemd 状态正常、本机 readyz、外网网页登录、重启后管理员/设备保留、停止/重启服务与日志。高德真实地图、iPhone Safari 和安卓真机链路仍按 [项目进度](PROGRESS.md) 单独验收。

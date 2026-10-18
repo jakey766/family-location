@@ -1,12 +1,18 @@
 # 项目进度
 
-更新日期：2026-10-15。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)及[第四步计划](superpowers/plans/2026-10-15-web-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
+更新日期：2026-10-18。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)、[第四步计划](superpowers/plans/2026-10-15-web-plan.md)及[第五步计划](superpowers/plans/2026-10-18-android-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
 
 ## 当前状态
 
+2026-10-18（vivo 界面反馈）：用户已在 vivo X9 / Android 7.1.2 安装打开 0.5.0，提供截图并确认正常打开/滚动也会文字残影、黑底。已生成 0.5.1（versionCode 2）正式兼容包：API 25 主界面软件绘制、滚动视图不透明背景、仅变化时更新文字；Robolectric API 25/33 六项页面测试和原有 28 项测试均通过，Release lint 零问题，签名与已有发布证书一致。便于传输的副本位于 `bin/family-location-0.5.1-release.apk`。截图症状指向绘制兼容问题，但尚未在本机复现 vivo GPU 行为；新包需要用户真机复测，不能记录为界面已验收。
+
+2026-10-18：第五步安卓客户端代码已实现，新增 `android/`（`com.jk.family`，minSdk 25、targetSdk 35），包括配对、主动启停、隐私授权、前台服务、高德适配、30/180 秒策略、离线最新点及 Keystore 凭证。28 项 JVM 测试、Kotlin 客户端与真实隔离后端联调、Debug APK 构建及零问题 Android lint 均通过。用户确认 Android Key 与发布签名已有；发现项目内已有 `secrets/android/release.jks` 和 `debug.jks`，未重新生成或覆盖。用户已补齐两份本地配置；签名配置原文件名 `secrets/signing.properties` 已更正为构建使用的 `secrets/android-signing.properties`，没有改动其配置内容。`make android-release` 已成功生成正式签名 APK，签名校验通过且证书与配置的发布签名库一致；已确认 Key 打包、包名/minSdk/targetSdk 正确、APK 不可调试。真实高德、三台安卓、iPhone 和公网链路仍未验收。
+
+2026-10-17：用户在服务器 `/opt/family-location` 尝试源码构建，下载依赖阶段报 GOPROXY 列表没有有效条目。已核对 Go 源码与代理规则，补充服务器终端的代理修复说明；尚未取得重试成功结果，不代表部署已完成。
+
 2026-10-15：第四步网页代码已实现，Go 服务根路径提供管理员登录、家人位置列表、设备配对/撤销及高德地图适配。用户确认尚未申请 Web JS API Key，当前实现无地图降级和配置说明。已通过 Go、前端状态/SDK 替身、DOM + 真实隔离后端检查；真实高德、浏览器完整交互与 iPhone Safari 真机验收未完成。安卓 App 尚未创建。已有管理员无需重新初始化，包名仍为 `com.jk.family`。
 
-第一步已完成，用户于 2026-10-12 反馈 backend 本地运行验证通过，并要求继续。第二步已实现管理员认证、设备配对、独立设备凭证及权限校验，第三步位置后端也已完成；本次继续第四步，没有重复开始已有阶段。
+第一步已完成，用户于 2026-10-12 反馈 backend 本地运行验证通过，并要求继续。第二步已实现管理员认证、设备配对、独立设备凭证及权限校验，第三步位置后端也已完成；截至 2026-10-15 交付到第四步，2026-10-18 从此继续第五步，没有重复开始已有阶段。
 
 ## 已完成
 
@@ -39,6 +45,16 @@
 - 新增 [网页说明](WEB_UI.md)、网页设计/计划、`web-test` / `web-smoke` 与可选浏览器脚本；测试依赖锁定并安装到 `.cache/`。
 
 - 2026-10-15 补充 [服务器部署说明](DEPLOYMENT.md)：用户服务器已有 Go，提供源码上传/本机架构构建、独立正式账号、systemd、项目内配置/日志、更新与排错；此次仅编写文档，没有连接服务器或执行部署。
+
+### 第五步代码（2026-10-18）
+
+- 新增 Android 原生 Kotlin App + JVM core 模块，锁定 Gradle/AGP/Kotlin/高德版本；提供 Wrapper 下载校验、项目内 SDK/缓存/临时目录、debug 签名及正式签名配置入口。
+- 配对表单、固定服务器地址、设备名、状态、开启/停止、系统定位设置与解除本机配对；配对默认不共享，无开机广播，服务为 START_NOT_STICKY。
+- 明确隐私说明与高德政策链接，用户同意后才构造 SDK；粗略/精确权限、Android 13 通知拒绝路径及 Android 7.1/8+ 前台服务启动分支，通知提供停止动作。
+- AES-GCM Android Keystore 加密设备凭证，禁用备份；HTTP origin 校验、设备 Bearer 隔离、禁用 Cookie/重定向/隐式重试、10 秒总超时及响应大小上限。
+- 共享代次、最新待发点、原始定位时间与采集序号；停止立即销毁 SDK/使回调失效/清空点，只取消上传，在途 start 串行完成后清理；旧响应不能恢复共享或清除新点。
+- 初始 30 秒移动策略，锚点/精度/速度与单调时钟判断静止后 180 秒；仅接收高德 GCJ-02，定位错误不伪造点，电量无法读取可空。离线约 15 秒重试最新点；401/409 停止，400 明确拒绝后允许校准时钟恢复。
+- 新增 `make android-test/android-build/android-lint/android-smoke/android-release/android-signing`、[Android 使用与验收](ANDROID.md)、第五步设计/计划，保留三台真机的独立待验收清单。
 
 ## 已执行验证及结果
 
@@ -108,6 +124,33 @@ DOM 测试不包含真实渲染、触控或 Safari 平台行为。没有截图�
 
 核对了 Go 版本、Makefile 构建/缓存、配置变量和服务退出行为，检查文档链接与 shell 代码块语法。systemd 示例参考官方文档；当前 macOS 环境没有 systemd，未运行 Linux unit 校验或远程部署。没有因此将第六步部署联调标记为完成。
 
+### 第五步验证（2026-10-18）
+
+| 检查 | 实际结果与边界 |
+| --- | --- |
+| `make android-test` | 20 项 core + 8 项服务协调层 JVM 测试通过；普通运行时独立后端用例跳过，由下列 smoke 实际执行。覆盖启停代次、迟到 start 清理、旧上传确认、最新点重试、400 时间校准、401 撤销、离线停止提示、移动/静止、真实本地 HTTP/超时/取消/响应大小/重定向及 Cookie 隔离 |
+| `make android-build` | Debug APK 构建通过，产物 `android/app/build/outputs/apk/debug/app-debug.apk`；`aapt` 确认包名 `com.jk.family`、versionCode 1、minSdk 25、targetSdk 35 |
+| `apksigner verify --verbose` | Debug APK v2 签名校验通过；使用项目内自动创建的调试签名，不等同于已有发布签名 |
+| `make android-release`（缺配置检查，历史） | 补齐配置前如预期在 preReleaseBuild 拒绝，明确要求本地发布签名配置 |
+| `make android-release`（补齐配置后） | 构建通过；正式包 `android/app/build/outputs/apk/release/app-release.apk`，约 1.4 MiB，versionName 0.5.0、versionCode 1；签名验证及配置证书比对通过，Key 已打包、debuggable 未开启，minSdk 25 / targetSdk 35 |
+| `:app:lintRelease` | 正式变体通过，0 errors / 0 warnings；不代表高德或真机已验收 |
+| `make android-lint` | 通过，报告 0 errors / 0 warnings；不代表真实系统权限、UI、Keystore 或 SDK 已实测 |
+| `make android-smoke` | 实际 Kotlin DeviceApi + Go 临时进程/SQLite：一次性配对、开启、重复上传 false、更新、旧序号 409、停止后 409；管理员查询和数据库确认停止后无位置，正式数据未写入 |
+| `make test vet web-test` | 全部 Go 包测试、vet 及 7 项网页状态/地图替身测试通过 |
+| 独立需求与质量审核 | core 与 app 均通过；发现的未来采集时间被 400 拒绝后阻断正常点问题已先补失败用例、修复并复核，停止时取消 start 的清理竞态也已补红绿回归 |
+
+测试先观察缺实现失败；停止 start 取消与未来时间恢复两个集成回归均先失败后修复。所有测试为 JVM/本地 HTTP/构建静态检查，未执行 Android 模拟器或三台真实设备。没有高德真实鉴权/定位、锁屏间隔/耗电、真实通知/触控与端到端验收结果；Keystore 与系统生命周期行为也仍需真机验证。正式签名包已使用已有签名库构建并验证，不能据 APK 构建宣称第五步已全部验收。
+
+### vivo X9 界面兼容包验证（2026-10-18，0.5.1）
+
+- 用户报告：0.5.0 已在 vivo X9 安装打开；截图包含文字残影与黑底，进一步确认正常打开/滚动也异常。未记录为安装后功能验收通过。
+- 自动复现边界：新增 Robolectric API 25/33 页面测试，原先两个平台在 3 秒内各发生 12 次未变化文字写入；两平台的滚动布局均未发现控件重叠。API 25 使用硬件绘制的原路径也由兼容模式测试捕获。这些结果不能证明 vivo 驱动根因或复现截图像素。
+- 修正：MainActivity 在 API 25 改软件绘制，API 26+ 保持硬件绘制；滚动区域有不透明背景；四处状态文字仅变化时写入。versionCode 从 1 升为 2，versionName 从 0.5.0 升为 0.5.1，包名/签名/凭证格式保持一致，可覆盖安装。
+- `make android-test`：20 项 core、8 项共享协调、6 项页面测试均通过；普通测试的独立后端 smoke 用例按设计跳过。本次没有修改 HTTP/后端，没有重复进行端到端模拟。
+- `make android-release`、`:app:lintRelease`：均通过，Release lint 0 errors / 0 warnings。APK 签名验证和与配置证书比对通过，确认 Key 打包且不可调试，`aapt` 确认 versionCode 2 / versionName 0.5.1 / minSdk 25 / targetSdk 35。
+- 正式产物 `android/app/build/outputs/apk/release/app-release.apk`；传输副本 `bin/family-location-0.5.1-release.apk`，SHA-256 为 `9de164bcbf500f940e489d2ebdd855cf8d4acbb5f5d040a53743b6ee7d8d3cc3`。
+- 独立定向审核通过，无阻塞项；仍需用户在 vivo X9 复测普通打开、上下滚动、输入框/键盘与隐私弹窗。Robolectric 不等于 vivo GPU 或 Android 13 设备验收，软件绘制下的流畅度也需观察。
+
 ## 当前启动与检查
 
 需要 Go 1.26.0 或更高版本及 make；烟雾脚本需要 Python 3。以下命令在本机执行：
@@ -131,14 +174,14 @@ curl -i http://127.0.0.1:8080/readyz
 ## 未完成与未验证
 
 - 位置后端已完成自动验证；用户正式数据库上的手动共享流程尚未确认，没有真实安卓采集位置。
-- Kotlin App、高德定位 SDK、共享启停、后台定位策略和签名 APK 尚未实现。
+- Kotlin App、高德适配、共享启停和后台策略代码已实现，Debug 和正式签名 APK 均已构建，已有 Android Key/发布签名已配置；真实 SDK/硬件/权限/后台/耗电尚未验收。
 - 网页上述功能代码已实现，但高德真实 Key、iPhone Safari 窄屏/触控/后台恢复和完整浏览器交互尚未验收；用户当前未申请 Web JS API Key。
-- Mi 11 Lite（Android 13）、Redmi Note 13 Pro（Android 13）、vivo X9（Android 7.1.2）均未进行本项目真机验证；30 秒／3 分钟效果、耗电和后台稳定性尚无实测结论。
+- vivo X9（Android 7.1.2）已收到安装/打开后的界面异常反馈，0.5.1 兼容处理待用户复测；Mi 11 Lite、Redmi Note 13 Pro（均 Android 13）尚未进行本项目真机验证。三台的 30 秒／3 分钟效果、耗电和后台稳定性均尚无实测结论。
 - 公网服务器部署、HTTP/IP 端到端联调未执行；HTTPS 按已确认范围留待后续。
 
 ## 下一步
 
-第四步代码已交付，下一实施阶段为第五步安卓 App（Kotlin、高德定位、配对/主动启停、30/180 秒目标、离线仅保留最新点），随后第六步公网部署联调。网页同时保留待验收事项：用户申请 Web JS API Key 并配置后检查真实地图，使用 iPhone Safari 验证布局、触控、复制与生命周期；不能把这些待验收事项默认为已通过。
+第五步安卓代码和正式签名 APK 已交付，先在 vivo X9 覆盖安装 0.5.1 复测界面，再按计划验收其他功能。安装 `android/app/build/outputs/apk/release/app-release.apk`，按 [ANDROID.md](ANDROID.md) 分别验证三台设备，随后进行第六步公网部署联调。网页同时保留待验收事项：用户申请 Web JS API Key 并配置后检查真实地图，使用 iPhone Safari 验证布局、触控、复制与生命周期；不能把这些待验收事项默认为已通过。
 
 后续阶段交付与验收：
 
@@ -149,6 +192,6 @@ curl -i http://127.0.0.1:8080/readyz
 | 第五步：安卓 App | Kotlin + 高德定位 SDK、配对、主动开启/停止共享、30/180 秒策略、断网仅保留最新点、签名 APK | 三台目标设备分别验收；真实手机位置显示在已完成的网页，vivo 调试不替代 Android 13 验证 |
 | 第六步：部署联调 | 公网 HTTP/IP 部署、进程守护、数据权限、完整使用说明 | 安卓到 iPhone 的真实链路、锁屏/断网/重启、停止与撤销；HTTPS 仍留后续 |
 
-本次代码交付到第四步网页；第四步浏览器/真实地图/iPhone 验收仍未完成，第五步及之后尚未实现。构建产物、DOM 测试与模拟工具不替代真机和公网验收。
+本次代码交付到第五步安卓；第四步浏览器/真实地图/iPhone 和第五步三台安卓真机验收仍未完成，第六步尚未执行。构建产物、JVM/DOM 测试与模拟工具不替代真机和公网验收。
 
 汪汪

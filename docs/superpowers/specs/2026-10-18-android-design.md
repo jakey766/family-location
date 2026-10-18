@@ -1,0 +1,38 @@
+# 第五步：Android 客户端设计
+
+沿用已确认的[整体设计](2026-10-10-family-location-design.md)与[项目上下文](../../PROJECT_CONTEXT.md)。本次授权为继续实现第五步，直接在现有工作区实施；不重新讨论已确认的产品范围。
+
+## 工程与界面
+
+新增 `android/`，包名 `com.jk.family`，minSdk 25、compile/targetSdk 35。锁定 AGP 8.9.2、Gradle 8.11.1、Kotlin 2.1.20、高德定位 6.4.9。采用原生 Activity、前台 Service 与独立 Kotlin/JVM 核心模块，避免首版引入 Compose 或跨平台框架。原生页面足以完成服务器地址、配对标识/数字码、设备名、共享状态和启停；核心模块可在没有设备和高德 Key 时验证。WorkManager 不适用于约 30 秒连续采样。
+
+首次配对仅保存设备凭证，不启动定位。凭证使用 Android Keystore 的 AES-GCM 加密后存入私有偏好设置，禁用备份。地址只允许 HTTP(S) origin，不允许 URL 内密码、路径、查询和片段；已配对地址固定，解除本机配对后才能更换。解除前停止本地共享，并提示管理员撤销服务端设备。
+
+## 用户主动共享
+
+在可见 Activity 中解释收集位置、电量、设备信息及向家庭管理员共享的用途，提供高德隐私政策链接；只有明确同意、已配对、Key 已配置并授予定位权限才启动服务。同时请求粗略和精确权限；只授予粗略权限也可以运行并显示精度限制。Android 13 通知权限独立请求，拒绝不误报定位失败。无需后台定位权限。
+
+服务立即发布常驻通知，通知和页面均可停止。API 26 以下使用 startService，以上使用 startForegroundService；声明 location 前台服务类型与对应权限。START_NOT_STICKY，无开机广播，不在进程重建时自动恢复共享。停止先使本地状态失效、销毁 SDK、清空待发点，再异步关闭服务端会话；停止请求失败明确提示最长 7 分钟租约，而非声称服务器已删除。
+
+## 会话与位置
+
+启停 API 串行；每次主动开启建立新会话。迟到的开始响应在用户已停止时只用于清理服务端会话，不能重新启动采集。上传与停止串行协调，旧响应不能清除新点或恢复共享。401 停止并要求重新配对，409 会话冲突停止，400 时间/数据拒绝丢弃该点并提示检查时间，网络错误保留最新点按约 15 秒退避重试，不自动重建共享会话。
+
+每个有效新点在采集时分配递增序号，并保留 SDK 定位时间；仅接受 GCJ-02、有限合法坐标/精度，不把 SDK 错误或 WGS84 标为 GCJ-02。只在内存保留一个最新待传点，断网新点覆盖旧点；同点重试保持时间/序号，旧上传完成不能清除替换它的新点。系统强杀丢弃待传点。
+
+移动初始间隔 30 秒；连续有效低速点且相对静止锚点位移不超过 max(50m, 两点精度和)、持续至少 180 秒后切换 180 秒。速度 >= 1m/s 或超过误差范围的位移恢复 30 秒。时间倒退或无效点不能驱动静止状态；间隔判断用单调时钟，定位时间仅用于上传。实际采样与耗电以真机为准。
+
+## 构建及验收
+
+Makefile 提供安卓测试、debug APK、release APK 和签名指纹入口，缓存、SDK 状态、debug 签名均在项目内。release 需要用户本地提供固定签名配置；不生成冒充正式发布的密钥，不将密码/凭证写入文档。未提供签名时 release 明确失败。
+
+自动验证涵盖最新点覆盖、序号/原始时间、启停竞态、调度、HTTP 契约、拒绝重定向和错误处理；构建及 lint 检查 Android 集成。真实高德定位、权限行为、通知、锁屏、断网恢复与耗电分别在三台目标设备验收。本机测试或 debug APK 不代表正式签名发布和真机完成。
+
+官方依据：
+
+- [AGP 8.9 兼容矩阵](https://developer.android.com/build/releases/agp-8-9-0-release-notes)
+- [定位前台服务](https://developer.android.com/about/versions/14/changes/fgs-types-required)
+- [高德初始化与隐私接口](https://developer.amap.com/api/android-location-sdk/guide/create-project/dev-attention)
+- [高德 Key 与签名](https://developer.amap.com/api/android-location-sdk/guide/create-project/get-key/)
+
+汪汪

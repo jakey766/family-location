@@ -71,3 +71,22 @@ web-browser-install: web-deps
 
 web-browser-test: build web-deps
 	PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/scripts/web_smoke.py" --browser
+
+.PHONY: android-test android-build android-lint android-release android-signing android-smoke
+android-test: prepare
+	sh "$(ROOT)/scripts/android.sh" :core:test :app:testDebugUnitTest
+
+android-build: prepare
+	sh "$(ROOT)/scripts/android.sh" :app:assembleDebug
+
+android-lint: prepare
+	sh "$(ROOT)/scripts/android.sh" :app:lintDebug
+
+android-release: prepare
+	sh "$(ROOT)/scripts/android.sh" :app:assembleRelease
+
+android-signing: prepare
+	sh "$(ROOT)/scripts/android.sh" :app:signingReport
+
+android-smoke: build
+	PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/scripts/android_smoke.py"

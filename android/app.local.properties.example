@@ -1,0 +1,3 @@
+# Copy to app.local.properties (ignored). Use an Android SDK key for com.jk.family.
+# Match its registered SHA-1 to the APK signing certificate; this is not a Web JS key.
+AMAP_API_KEY=

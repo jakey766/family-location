@@ -1,0 +1,4 @@
+<resources>
+    <string name="permission_status">%1$s；%2$s。</string>
+    <string name="privacy_body">开启后会使用高德定位 SDK 获取位置和定位精度，并将最新位置、原始定位时间、电量及设备名称发送给所配对家庭的管理员。高德为提供定位可能处理网络、Wi-Fi、基站、传感器、设备及位置信息，详见下方政策。\n\n本应用不保存历史轨迹；断网仅在内存保留最新待传点。你可随时在 App 或通知中停止，离线停止后服务器位置最迟在最后成功上传后 7 分钟隐藏。关闭 App 界面不等于停止共享；系统强杀后不会自动恢复。首版服务器使用 HTTP，网络传输未加密。\n\n高德隐私政策：https://lbs.amap.com/pages/privacy/</string>
+</resources>

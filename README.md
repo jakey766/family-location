@@ -2,7 +2,7 @@
 
 家庭位置共享，计划采用 Kotlin Android App + 高德定位 SDK + Go + SQLite + iPhone 网页。
 
-**当前已实现第四步网页代码：登录、家人位置列表、配对/撤销与高德地图接入。** 网页由现有 Go 服务直接提供；未配置地图时可正常查看文字列表。高德真实 Key 尚未申请，iPhone Safari 真机及浏览器完整交互仍待验收；安卓 App 尚未实现。
+**当前已实现第五步安卓客户端代码：配对、主动共享、高德定位接入、前台服务和离线最新点上传。** Debug/正式签名 APK 构建、JVM 测试和隔离后端联调已通过，vivo X9 已反馈界面重影，0.5.1 兼容处理待复测，三台安卓功能验收仍未完成。网页由 Go 服务直接提供，未配置地图时可查看文字列表；真实高德地图、iPhone Safari 及公网端到端验收仍待完成。
 
 - [整体设计](docs/superpowers/specs/2026-10-10-family-location-design.md)
 - [实施计划与进度](docs/superpowers/plans/2026-10-10-family-location-plan.md)
@@ -11,9 +11,10 @@
 - [管理员初始化与认证 API](docs/AUTH_API.md)
 - [位置 API 与隔离模拟工具](docs/LOCATION_API.md)
 - [网页使用、高德配置与手动验收](docs/WEB_UI.md)
+- [Android 构建、Key/签名配置与安装验收](docs/ANDROID.md)
 - [Linux 服务器部署（已有 Go 环境）](docs/DEPLOYMENT.md)
 
-后续顺序：补齐网页真实地图/iPhone 验收 → 安卓 App → 公网部署联调。网页先用隔离模拟位置验证，安卓完成后接入真实上报。
+下一步：安装正式签名 APK，分别完成三台安卓真机验收，再进行公网部署联调；网页真实地图/iPhone 验收同步补齐。自动检查只使用隔离模拟位置。
 
 ## 本地启动
 
@@ -75,6 +76,8 @@ FAMILY_HTTP_ADDR=127.0.0.1:9090 make run
 两个端点也支持 HEAD，其他方法 405，未知路径 404。均禁止缓存，健康状态无需登录，不暴露文件路径和底层错误。就绪失败返回 `{"status":"unavailable","database":"unavailable"}`。就绪检查不是磁盘容量或完整写能力检测。
 
 ## 测试与构建
+
+安卓需要 JDK 17/21 与项目内 Android SDK 35；本机已准备，其他环境见 [Android 文档](docs/ANDROID.md)。在项目根目录执行 `make android-test android-build android-lint android-smoke`；Debug APK 在 `android/app/build/outputs/apk/debug/`，正式签名配置后运行 `make android-release`。
 
 ```bash
 make test

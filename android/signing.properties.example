@@ -1,0 +1,6 @@
+# Copy to ../secrets/android-signing.properties (ignored), restrict permissions to 0600.
+# storeFile is relative to android/. Keep the existing release key; do not regenerate it.
+storeFile=../secrets/android/release.jks
+storePassword=
+keyAlias=
+keyPassword=
