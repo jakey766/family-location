@@ -12,12 +12,13 @@ import android.os.Looper
 import com.amap.api.location.AMapLocationClient
 import com.amap.api.location.AMapLocationClientOption
 import com.jk.family.core.Fix
+import com.jk.family.core.MotionPolicy
 
 internal class AmapSource(private val context: Context, private val notification: Notification) : PositionSource {
     private var client: AMapLocationClient? = null
     private val handler = Handler(Looper.getMainLooper())
     private var generation = 0
-    private var currentInterval = 30_000L
+    private var currentInterval = MotionPolicy.MOVING_INTERVAL
 
     override fun start(onFix: (Fix) -> Unit, onError: (String) -> Unit) {
         check(CredentialStore(context).consent && hasLocationPermission(context))
@@ -27,7 +28,7 @@ internal class AmapSource(private val context: Context, private val notification
         val epoch = ++generation
         val created = AMapLocationClient(context)
         client = created
-        currentInterval = 30_000L
+        currentInterval = MotionPolicy.MOVING_INTERVAL
         created.setLocationOption(options())
         created.setLocationListener { location ->
             // Copy data while in the SDK callback; do not keep a mutable SDK location.

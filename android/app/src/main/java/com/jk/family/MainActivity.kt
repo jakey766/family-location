@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.NotificationManager
 import android.content.Intent
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -36,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var code: EditText
     private lateinit var name: EditText
     private lateinit var pair: Button
+    private lateinit var pastePairing: Button
     private lateinit var start: Button
     private lateinit var stop: Button
     private lateinit var forget: Button
@@ -77,9 +79,11 @@ class MainActivity : Activity() {
         pairingId = input("网页生成的配对标识", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
         code = input("8 位配对码", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD)
         name = input("设备名称，例如 爸爸的手机", InputType.TYPE_CLASS_TEXT)
+        pastePairing = Button(this).apply { text = "粘贴配对信息"; setOnClickListener { importPairing(automatic = false) } }
+        fields.addView(pastePairing)
         pair = Button(this).apply { text = "配对此手机"; setOnClickListener { pairDevice() } }
         fields.addView(pair)
-        label("在家人网页的“设备配对”中生成标识和数字码。配对成功后共享仍保持关闭。", 14f)
+        label("在这台手机上复制网页的完整配对信息，打开 App 可自动填写空白表单；也可点击“粘贴配对信息”。请核对服务器地址、填写设备名称，再点击配对。配对成功后共享仍保持关闭。", 14f)
         status = label(AppRuntime.message, 18f)
         permissions = label("", 14f)
         start = button("开启共享") { beginSharing() }
@@ -87,7 +91,8 @@ class MainActivity : Activity() {
         button("隐私说明与授权") { showPrivacy(false) }
         button("系统定位设置") { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
         button("允许后台运行") { openBackgroundSettings() }
-        label("锁屏共享：请允许后台运行。vivo 请在电池设置允许本应用后台高耗电，在 i 管家允许自启动，并在最近任务中锁定本应用（名称随系统版本不同）。持续定位会增加耗电。", 14f)
+        if (Build.VERSION.SDK_INT >= 29) button("允许重启后恢复定位") { openBackgroundLocationSettings() }
+        label("开启一次后会记住选择，重新打开 App、手机重启及更新安装包时尝试恢复；停止共享后不再恢复。vivo 请允许后台高耗电、自启动，并在最近任务中锁定本应用。若 i 管家自启动列表没有“家庭位置”，请先安装最新版并打开一次，再检查列表；列表由系统管理，仍找不到时先设置后台高耗电和任务锁定。持续定位会增加耗电。", 14f)
         forget = button("解除本机配对") {
             AlertDialog.Builder(this).setTitle("解除本机配对？")
                 .setMessage("会立即停止本机定位并删除本机凭证。还请在家人网页中撤销这台设备；离线时最后位置仍会保留，请在网页撤销设备以清除。")
@@ -100,11 +105,41 @@ class MainActivity : Activity() {
                     refresh()
                 }.show()
         }
-        label("移动时目标约 30 秒更新，静止约 3 分钟。只保存最新位置；断网和省电限制可能延迟更新。停止后的服务器状态以页面提示为准。", 14f)
+        label("移动时目标约 1 分钟更新，静止约 3 分钟。只保存最新位置；断网和省电限制可能延迟更新。停止后的服务器状态以页面提示为准。", 14f)
     }
 
-    override fun onResume() { super.onResume(); revision = -1; handler.post(refreshTask) }
+    override fun onResume() {
+        super.onResume()
+        revision = -1
+        SharingService.requestResume(this)
+        handler.post(refreshTask)
+    }
     override fun onPause() { handler.removeCallbacks(refreshTask); super.onPause() }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Android 10+ permits clipboard reads only while our window has input focus.
+        if (hasFocus && ::pastePairing.isInitialized) importPairing(automatic = true)
+    }
+
+    private fun importPairing(automatic: Boolean) {
+        refresh()
+        if (credentials != null || credentialError || AppRuntime.pairing) return
+        if (automatic && listOf(origin, pairingId, code).any { it.text.isNotBlank() }) return
+        val info = runCatching {
+            val clip = getSystemService(ClipboardManager::class.java).primaryClip
+            // Only plain text: do not dereference a clipboard URI or launch an Intent.
+            PairingInfo.parse(if (clip != null && clip.itemCount > 0) clip.getItemAt(0).text else null)
+        }.getOrNull()
+        if (info == null) {
+            if (!automatic) showMessage("未读取到有效配对信息，请复制网页的完整 JSON（含地址、标识和数字码），或手工填写。")
+            return
+        }
+        origin.setText(info.origin)
+        pairingId.setText(info.id)
+        code.setText(info.code)
+        showMessage("已填入配对信息，请核对服务器地址、填写设备名称，再点击配对此手机。")
+    }
 
     private fun refresh() {
         if (revision != AppRuntime.credentialsRevision) {
@@ -121,11 +156,17 @@ class MainActivity : Activity() {
         val notification = if (getSystemService(NotificationManager::class.java).areNotificationsEnabled()) "通知已开启" else "通知未开启，可在 App 内停止共享"
         val battery = if (getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName))
             "已允许后台运行；仍需检查厂商省电设置" else "后台运行可能受省电限制，请点击下方允许后台运行"
-        permissions.setTextIfChanged(getString(R.string.permission_status, location, notification) + "\n" + battery)
+        val recovery = if (Build.VERSION.SDK_INT < 29) "已支持重启恢复；仍需允许厂商自启动"
+        else if (checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED)
+            "已允许重启后恢复定位；仍需允许厂商自启动"
+        else "重启自动恢复需允许始终访问位置；未允许时打开 App 会恢复"
+        permissions.setTextIfChanged(getString(R.string.permission_status, location, notification) + "\n" + battery + "\n" + recovery)
         start.isEnabled = credentials != null && !AppRuntime.active && !AppRuntime.pairing
+        start.setTextIfChanged(if (AppRuntime.active) "共享已开启" else if (store.sharingRequested) "重试恢复共享" else "开启共享")
         stop.isEnabled = AppRuntime.active || store.sharingRequested
         forget.isEnabled = (credentials != null || credentialError) && !AppRuntime.pairing
         pair.isEnabled = !AppRuntime.pairing
+        pastePairing.isEnabled = !AppRuntime.pairing
         pair.setTextIfChanged(if (AppRuntime.pairing) "正在配对…" else "配对此手机")
     }
 
@@ -140,6 +181,16 @@ class MainActivity : Activity() {
             runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
                 .onFailure { showMessage("请在手机设置中允许家庭位置后台运行，关闭对此应用的省电限制。") }
         }
+    }
+
+    private fun openBackgroundLocationSettings() {
+        AlertDialog.Builder(this).setTitle("允许重启后恢复定位")
+            .setMessage("为了在手机重启后继续你已开启的位置共享，请在系统应用设置的“权限 → 位置信息”中选择“始终允许”。请先授予普通定位权限。该权限只用于恢复已开启的共享；点击停止后不会恢复。暂不允许也可使用共享，重启后打开 App 即可恢复。")
+            .setNegativeButton("暂不设置", null)
+            .setPositiveButton("去设置") { _, _ ->
+                runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+                    .onFailure { showMessage("请在手机设置 → 应用 → 家庭位置 → 权限中设置位置访问权限。") }
+            }.show()
     }
 
     private fun pairDevice() {

@@ -18,11 +18,34 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [25, 33])
 @LooperMode(LooperMode.Mode.PAUSED)
 class SharingServiceTest {
+    @Test fun explicitResumeRequiresSavedIntentAndIsIdempotent() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).apply { consent = true; sharingRequested = true }
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        try {
+            val resume = Intent().setAction("com.jk.family.RESUME")
+            assertEquals(Service.START_STICKY, service.onStartCommand(resume, 0, 1))
+            assertTrue(AppRuntime.active)
+            assertEquals(Service.START_STICKY, service.onStartCommand(resume, 0, 2))
+            assertEquals("a second resume must not create another start request", 1, service.io.size)
+            service.onStartCommand(Intent().setAction(SharingService.STOP), 0, 3)
+            assertEquals("a queued resume after stop must stay stopped", Service.START_NOT_STICKY,
+                service.onStartCommand(resume, 0, 4))
+            assertFalse(AppRuntime.active)
+        } finally { lifecycle.destroy() }
+    }
+
     // No SDK or network needed: leave IO queued so lifecycle transitions can be inspected.
     class TestService : SharingService() {
         val io = ArrayDeque<Runnable>()
         var failStop = false
-        internal override fun readCredentials() = Credentials("http://localhost", "test", "test")
+        var failRead = false
+        var missingCredentials = false
+        internal override fun readCredentials(): Credentials? {
+            if (failRead) throw java.security.KeyStoreException("temporarily unavailable")
+            return if (missingCredentials) null else Credentials("http://localhost", "test", "test")
+        }
         internal override fun amapConfigured() = true
         internal override fun createController(remote: SharingRemote, source: PositionSource,
             status: (String) -> Unit, activeChanged: (Boolean) -> Unit) =
@@ -43,6 +66,37 @@ class SharingServiceTest {
         val service = lifecycle.get()
         try {
             assertEquals(Service.START_NOT_STICKY, service.onStartCommand(null, 0, 1))
+            assertFalse(AppRuntime.active)
+        } finally { lifecycle.destroy() }
+    }
+
+    @Test fun temporaryRestoreFailureDoesNotEraseTheUsersChoice() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).apply { consent = true; sharingRequested = true }
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        service.failRead = true
+        try {
+            assertEquals(Service.START_NOT_STICKY, service.onStartCommand(null, 0, 1))
+            assertTrue("a temporary startup failure is not an explicit stop", CredentialStore(service).sharingRequested)
+            assertFalse(AppRuntime.active)
+        } finally { lifecycle.destroy() }
+        val restored = Robolectric.buildService(TestService::class.java).create()
+        try {
+            assertEquals(Service.START_STICKY, restored.get().onStartCommand(Intent().setAction("com.jk.family.RESUME"), 0, 2))
+            assertTrue(AppRuntime.active)
+        } finally { restored.destroy() }
+    }
+
+    @Test fun missingPairingNeverRestoresEvenWithStaleSavedIntent() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).apply { consent = true; sharingRequested = true }
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        service.missingCredentials = true
+        try {
+            assertEquals(Service.START_NOT_STICKY, service.onStartCommand(null, 0, 1))
+            assertFalse(CredentialStore(service).sharingRequested)
             assertFalse(AppRuntime.active)
         } finally { lifecycle.destroy() }
     }

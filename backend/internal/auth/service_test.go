@@ -34,6 +34,36 @@ func admin(t *testing.T, s *Service, username string) Admin {
 	}
 	return a
 }
+func TestShortPairingIDAndLegacyCompatibility(t *testing.T) {
+	s, db := setup(t)
+	ctx := context.Background()
+	a := admin(t, s, "short-pair")
+	p, err := s.CreatePairing(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.ID) != 12 || strings.Trim(p.ID, "23456789ABCDEFGHJKLMNPQRSTUVWXYZ") != "" {
+		t.Fatalf("expected 12 unambiguous characters, got length %d", len(p.ID))
+	}
+	paired, err := s.Pair(ctx, p.ID, p.Code, "short", "short-ip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paired.Token) != 43 || len(paired.Device.ID) != 43 {
+		t.Fatal("device credentials must keep their original length")
+	}
+	p, err = s.CreatePairing(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Repeat("x", 43)
+	if _, err := db.Exec("UPDATE pairing_codes SET id=?,code_hash=? WHERE id=?", legacy, digest(legacy+":"+p.Code), p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pair(ctx, legacy, p.Code, "legacy", "legacy-ip"); err != nil {
+		t.Fatal(err)
+	}
+}
 func TestAdminAndSessionLifecycle(t *testing.T) {
 	s, db := setup(t)
 	ctx := context.Background()

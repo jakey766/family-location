@@ -1,6 +1,7 @@
 package com.jk.family
 
 import android.annotation.SuppressLint
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -59,7 +60,8 @@ open class SharingService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action != START && !(intent == null && store.sharingRequested)) {
+        val restoring = intent == null || intent.action == RESUME
+        if (intent?.action != START && !(restoring && store.sharingRequested)) {
             stopSelf(); return START_NOT_STICKY
         }
         if (controller?.active == true) return START_STICKY
@@ -67,8 +69,10 @@ open class SharingService : Service() {
         val credentialsRevision = AppRuntime.credentialsRevision
         try {
             val credentials = readCredentials()
-            check(credentials != null && store.consent && AmapSource.hasLocationPermission(this))
-            check(amapConfigured())
+            if (credentials == null || !store.consent || !AmapSource.hasLocationPermission(this) || !amapConfigured()) {
+                store.sharingRequested = false
+                error("Sharing prerequisites are missing")
+            }
             createChannel()
             if (Build.VERSION.SDK_INT >= 29) startForeground(1, notification("正在开启共享"), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
             else startForeground(1, notification("正在开启共享"))
@@ -110,13 +114,18 @@ open class SharingService : Service() {
             created.start()
             handler.postDelayed(tick, 15_000)
         } catch (_: Exception) {
-            store.sharingRequested = false
-            controller?.stop("无法启动定位，请检查权限、系统定位及配置")
+            // A transient platform/Keystore failure is not a user stop. Stop this instance
+            // without an immediate sticky retry loop; the next recovery entry can try again.
+            destroying = true
+            controller?.release()
             AppRuntime.active = false
-            AppRuntime.message = "无法启动共享，请检查配对、隐私授权、定位权限和高德 Key。"
+            AppRuntime.message = if (store.sharingRequested)
+                "共享仍已开启，但服务暂未恢复；请重新打开 App 重试，并检查系统后台限制。"
+            else "无法启动共享，请检查配对、隐私授权、定位权限和高德 Key。"
             stopForeground(STOP_FOREGROUND_REMOVE)
             releaseWakeLock()
             stopSelf()
+            return START_NOT_STICKY
         }
         return if (store.sharingRequested) START_STICKY else START_NOT_STICKY
     }
@@ -129,7 +138,7 @@ open class SharingService : Service() {
         if (AppRuntime.controller === controller) {
             AppRuntime.controller = null
             AppRuntime.active = false
-            if (CredentialStore(this).sharingRequested) AppRuntime.message = "共享服务中断，等待系统恢复；也可打开 App 重新开启。"
+            if (CredentialStore(this).sharingRequested) AppRuntime.message = "共享仍已开启，服务暂时中断；等待系统恢复，打开 App 也会自动恢复。"
         }
         super.onDestroy()
     }
@@ -168,8 +177,32 @@ open class SharingService : Service() {
 
     companion object {
         const val START = "com.jk.family.START"
+        const val RESUME = "com.jk.family.RESUME"
         const val STOP = "com.jk.family.STOP"
         private const val CHANNEL = "sharing"
+
+        fun requestResume(context: Context, fromBackground: Boolean = false) {
+            val store = CredentialStore(context)
+            if (!store.sharingRequested || AppRuntime.active) return
+            if (!store.consent || !AmapSource.hasLocationPermission(context)) {
+                store.sharingRequested = false
+                AppRuntime.message = "共享已停止：隐私或定位授权已撤回，请授权后重新开启。"
+                return
+            }
+            if (fromBackground && Build.VERSION.SDK_INT >= 29 &&
+                context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                AppRuntime.message = "共享仍已开启，等待打开 App 恢复；如需重启后自动恢复，请允许始终访问位置。"
+                return
+            }
+            val intent = Intent(context, SharingService::class.java).setAction(RESUME)
+            AppRuntime.message = "共享已开启，正在恢复服务…"
+            try {
+                if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+            } catch (_: Exception) {
+                // A system launch restriction must not erase the user's persistent choice.
+                AppRuntime.message = "共享仍已开启，但系统暂未允许恢复；请保持 App 在前台并检查后台运行权限。"
+            }
+        }
 
         // Context.stopService matches the explicit component, not Intent object identity.
         @SuppressLint("ImplicitSamInstance")

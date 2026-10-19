@@ -26,6 +26,62 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [25, 33], qualifiers = "w360dp-h640dp-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
 class MainActivityTest {
+    @Test fun reopeningResumesSavedSharingWithoutAnotherButtonClick() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        CredentialStore(app).apply { consent = true; sharingRequested = true }
+        shadowOf(app).grantPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try {
+            val intent = shadowOf(app).nextStartedService
+            assertNotNull("opening the app must resume a previously enabled share", intent)
+            assertEquals("com.jk.family.RESUME", intent.action)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3))
+            assertNull("status polling must not repeatedly start the service", shadowOf(app).nextStartedService)
+            val buttons = descendants(controller.get().findViewById(android.R.id.content)).filterIsInstance<android.widget.Button>()
+            assertTrue(buttons.first { it.text.toString() == "停止共享" }.isEnabled)
+            assertFalse(descendants(controller.get().findViewById(android.R.id.content)).filterIsInstance<TextView>()
+                .any { it.text.toString().startsWith("共享已关闭") })
+        } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun explicitlyStoppedSharingDoesNotResumeWhenReopening() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        CredentialStore(app).apply { consent = true; sharingRequested = true }
+        SharingService.requestStop(app)
+        shadowOf(app).grantPermissions(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try { assertNull(shadowOf(app).nextStartedService) }
+        finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun newlyInstalledAppDoesNotStartSharing() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try { assertNull(shadowOf(app).nextStartedService) }
+        finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun modernDevicesOfferSeparateBackgroundLocationSettingsWithAnExplanation() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try {
+            val activity = controller.get()
+            val button = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<android.widget.Button>()
+                .firstOrNull { it.text.toString() == "允许重启后恢复定位" }
+            if (Build.VERSION.SDK_INT < 29) assertNull(button)
+            else {
+                assertNotNull(button)
+                button!!.performClick()
+                val dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+                assertNotNull("explain the purpose before opening permissions", dialog)
+                dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+                shadowOf(Looper.getMainLooper()).idle()
+                val intent = shadowOf(activity).nextStartedActivity
+                assertEquals(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, intent.action)
+                assertEquals("package:com.jk.family", intent.data.toString())
+            }
+        } finally { controller.pause().stop().destroy() }
+    }
+
     @Test fun legacyActivityUsesSoftwareRenderingWithoutDisablingModernRendering() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
         try {

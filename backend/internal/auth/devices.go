@@ -22,19 +22,29 @@ func (s *Service) authorizeAdmin(ctx context.Context, a Admin) error {
 	}
 	return nil
 }
+
+// Pairing IDs have 60 random bits; device and session tokens retain 256 bits.
+func randomPairingID() (string, error) {
+	const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate pairing id: %w", err)
+	}
+	for i := range b {
+		b[i] = alphabet[b[i]&31]
+	}
+	return string(b), nil
+}
+
 func (s *Service) CreatePairing(ctx context.Context, a Admin) (Pairing, error) {
 	if err := s.authorizeAdmin(ctx, a); err != nil {
-		return Pairing{}, err
-	}
-	id, err := randomToken()
-	if err != nil {
 		return Pairing{}, err
 	}
 	number, err := rand.Int(rand.Reader, big.NewInt(100000000))
 	if err != nil {
 		return Pairing{}, fmt.Errorf("generate code: %w", err)
 	}
-	p := Pairing{ID: id, Code: fmt.Sprintf("%08d", number.Int64()), ExpiresAt: s.now().Add(10 * time.Minute).Truncate(time.Second)}
+	p := Pairing{Code: fmt.Sprintf("%08d", number.Int64()), ExpiresAt: s.now().Add(10 * time.Minute).Truncate(time.Second)}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Pairing{}, fmt.Errorf("begin pairing: %w", err)
@@ -43,8 +53,26 @@ func (s *Service) CreatePairing(ctx context.Context, a Admin) (Pairing, error) {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM pairing_codes WHERE expires_at<=? OR family_id=?", s.now().Unix(), a.FamilyID); err != nil {
 		return Pairing{}, fmt.Errorf("clean pairings: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO pairing_codes(id,family_id,code_hash,expires_at) VALUES (?,?,?,?)", id, a.FamilyID, digest(id+":"+p.Code), p.ExpiresAt.Unix()); err != nil {
-		return Pairing{}, fmt.Errorf("create pairing: %w", err)
+	for attempt := 0; attempt < 5; attempt++ {
+		id, err := randomPairingID()
+		if err != nil {
+			return Pairing{}, err
+		}
+		result, err := tx.ExecContext(ctx, "INSERT INTO pairing_codes(id,family_id,code_hash,expires_at) VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING", id, a.FamilyID, digest(id+":"+p.Code), p.ExpiresAt.Unix())
+		if err != nil {
+			return Pairing{}, fmt.Errorf("create pairing: %w", err)
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return Pairing{}, fmt.Errorf("check pairing creation: %w", err)
+		}
+		if n == 1 {
+			p.ID = id
+			break
+		}
+	}
+	if p.ID == "" {
+		return Pairing{}, fmt.Errorf("generate unique pairing id: retries exhausted")
 	}
 	if err := tx.Commit(); err != nil {
 		return Pairing{}, fmt.Errorf("commit pairing: %w", err)
