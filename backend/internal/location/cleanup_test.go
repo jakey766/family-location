@@ -10,10 +10,10 @@ func TestCleanupLoopRunsAtStartupOnTickAndCancels(t *testing.T) {
 	f := setup(t)
 	id := f.start(t)
 	mustUpload(t, f, point(id, 1, f.now), true)
-	// Use immutable now while the worker runs. Expire the row directly.
+	// Use immutable now while the worker runs. Simulate a revoked residual row.
 	expire := func() {
 		t.Helper()
-		if _, e := f.db.Exec("UPDATE latest_locations SET lease_expires_at=?", f.now.UnixMilli()); e != nil {
+		if _, e := f.db.Exec("UPDATE devices SET revoked_at=?", f.now.UnixMilli()); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -43,6 +43,9 @@ func TestCleanupLoopRunsAtStartupOnTickAndCancels(t *testing.T) {
 	failures := make(chan struct{}, 1)
 	go func() { defer close(done); f.s.cleanupLoop(ctx, ticks, func() { failures <- struct{}{} }) }()
 	waitEmpty()
+	if _, e := f.db.Exec("UPDATE devices SET revoked_at=NULL"); e != nil {
+		t.Fatal(e)
+	}
 	mustUpload(t, f, point(id, 2, f.now), true)
 	expire()
 	ticks <- f.now

@@ -1,17 +1,20 @@
 package com.jk.family
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import com.jk.family.core.DeviceApi
 import com.jk.family.core.Upload
@@ -22,19 +25,26 @@ internal object AppRuntime {
     val io = Executors.newSingleThreadExecutor()
     var controller: SharingController? = null
     var active = false
-    var message = "共享已关闭。每次重新打开后，请主动开启。"
+    var message = "共享已关闭。准备好后请主动开启。"
     var pairing = false
     var credentialsRevision = 0
+    var serviceGeneration = 0
 }
 
-class SharingService : Service() {
+open class SharingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var controller: SharingController? = null
+    private var destroying = false
+    private var wakeLock: PowerManager.WakeLock? = null
     private val tick = object : Runnable {
         override fun run() {
             val current = controller ?: return
             if (!AmapSource.hasLocationPermission(this@SharingService)) current.stop("定位权限已撤回")
-            else current.retry()
+            else {
+                // Bounded lock, renewed only while the user-requested service is alive.
+                wakeLock?.acquire(10 * 60_000L)
+                current.retry()
+            }
             if (current.active) handler.postDelayed(this, 15_000)
         }
     }
@@ -42,20 +52,32 @@ class SharingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val store = CredentialStore(this)
         if (intent?.action == STOP) {
+            store.sharingRequested = false
             controller?.stop()
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action != START) { stopSelf(); return START_NOT_STICKY }
-        if (controller?.active == true) return START_NOT_STICKY
+        if (intent?.action != START && !(intent == null && store.sharingRequested)) {
+            stopSelf(); return START_NOT_STICKY
+        }
+        if (controller?.active == true) return START_STICKY
+        val runtimeGeneration = ++AppRuntime.serviceGeneration
+        val credentialsRevision = AppRuntime.credentialsRevision
         try {
-            val credentials = CredentialStore(this).read()
-            check(credentials != null && CredentialStore(this).consent && AmapSource.hasLocationPermission(this))
+            val credentials = readCredentials()
+            check(credentials != null && store.consent && AmapSource.hasLocationPermission(this))
             check(amapConfigured())
             createChannel()
             if (Build.VERSION.SDK_INT >= 29) startForeground(1, notification("正在开启共享"), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
             else startForeground(1, notification("正在开启共享"))
+            store.sharingRequested = true
+            wakeLock = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "family:sharing").apply {
+                    setReferenceCounted(false)
+                    acquire(10 * 60_000L)
+                }
             val api = DeviceApi(credentials.origin, credentials.token)
             val remote = object : SharingRemote {
                 override fun start() = api.start()
@@ -64,10 +86,10 @@ class SharingService : Service() {
                 override fun cancel() = api.cancel()
             }
             lateinit var created: SharingController
-            created = SharingController(remote, AmapSource(applicationContext), AppRuntime.io,
-                { command -> handler.post(command) }, SystemClock::elapsedRealtime,
+            created = createController(remote, AmapSource(applicationContext, notification("正在后台共享位置")),
                 { message ->
-                    if (AppRuntime.controller === created) {
+                    // Stop completion may arrive after onDestroy. A new run or pairing invalidates it.
+                    if (AppRuntime.serviceGeneration == runtimeGeneration && AppRuntime.credentialsRevision == credentialsRevision) {
                         AppRuntime.message = message
                         if (AppRuntime.active) {
                             getSystemService(NotificationManager::class.java).notify(1, notification(message))
@@ -75,8 +97,10 @@ class SharingService : Service() {
                     }
                 }, { active ->
                     if (AppRuntime.controller === created) AppRuntime.active = active
-                    if (!active && controller === created) {
+                    if (!active && controller === created && !destroying) {
+                        store.sharingRequested = false
                         handler.removeCallbacks(tick)
+                        releaseWakeLock()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
                     }
@@ -86,21 +110,41 @@ class SharingService : Service() {
             created.start()
             handler.postDelayed(tick, 15_000)
         } catch (_: Exception) {
+            store.sharingRequested = false
             controller?.stop("无法启动定位，请检查权限、系统定位及配置")
             AppRuntime.active = false
             AppRuntime.message = "无法启动共享，请检查配对、隐私授权、定位权限和高德 Key。"
             stopForeground(STOP_FOREGROUND_REMOVE)
+            releaseWakeLock()
             stopSelf()
         }
-        return START_NOT_STICKY
+        return if (store.sharingRequested) START_STICKY else START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        destroying = true
         handler.removeCallbacks(tick)
-        controller?.stop("共享服务已停止")
-        // Keep IO completion callbacks alive to clean late start responses; they cannot restart location.
+        controller?.release()
+        releaseWakeLock()
+        if (AppRuntime.controller === controller) {
+            AppRuntime.controller = null
+            AppRuntime.active = false
+            if (CredentialStore(this).sharingRequested) AppRuntime.message = "共享服务中断，等待系统恢复；也可打开 App 重新开启。"
+        }
         super.onDestroy()
     }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
+    internal open fun readCredentials() = CredentialStore(this).read()
+
+    internal open fun createController(remote: SharingRemote, source: PositionSource,
+        status: (String) -> Unit, activeChanged: (Boolean) -> Unit) =
+        SharingController(remote, source, AppRuntime.io, { handler.post(it) },
+            SystemClock::elapsedRealtime, status, activeChanged)
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -119,12 +163,24 @@ class SharingService : Service() {
             .addAction(Notification.Action.Builder(null, "停止共享", stop).build()).build()
     }
 
-    private fun amapConfigured(): Boolean = !packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+    internal open fun amapConfigured(): Boolean = !packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
         .metaData?.getString("com.amap.api.v2.apikey").isNullOrBlank()
 
     companion object {
         const val START = "com.jk.family.START"
         const val STOP = "com.jk.family.STOP"
         private const val CHANNEL = "sharing"
+
+        // Context.stopService matches the explicit component, not Intent object identity.
+        @SuppressLint("ImplicitSamInstance")
+        fun requestStop(context: Context, reason: String = "已停止本地共享") {
+            CredentialStore(context).sharingRequested = false
+            val current = AppRuntime.controller
+            if (current != null) current.stop(reason)
+            else {
+                context.stopService(Intent(context, SharingService::class.java))
+                AppRuntime.message = "$reason。若网页仍有最后位置，请在网页撤销设备。"
+            }
+        }
     }
 }

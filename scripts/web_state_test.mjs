@@ -28,7 +28,7 @@ test("server time advances using elapsed monotonic time, independent of phone wa
     now,
   );
 });
-test("expiry and revoked device remove positions at the exact boundary", () => {
+test("expired positions remain visible while revoked devices are removed", () => {
   const locations = [
     point(),
     point({ device_id: "b" }),
@@ -43,9 +43,9 @@ test("expiry and revoked device remove positions at the exact boundary", () => {
   ];
   assert.deepEqual(
     visibleLocations(locations, devices, now).map((p) => p.device_id),
-    ["a"],
+    ["a", "c"],
   );
-  assert.deepEqual(visibleLocations(locations, devices, now + 60_000), []);
+  assert.deepEqual(visibleLocations(locations, devices, now + 60_000).map(p => p.device_id), ["a", "c"]);
   assert.deepEqual(visibleLocations(locations, [], now), []);
 });
 test("stale is based on original capture, not recent receipt", () => {
@@ -60,7 +60,7 @@ test("stale is based on original capture, not recent receipt", () => {
     "stale",
   );
   assert.equal(locationStatus(point(), now), "fresh");
-  assert.equal(locationStatus(point(), now + 60_000), "expired");
+  assert.equal(locationStatus(point(), now + 60_000), "stale");
   assert.equal(
     locationStatus(point({ captured_at: "invalid" }), now),
     "invalid",

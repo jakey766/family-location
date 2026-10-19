@@ -67,7 +67,7 @@ func (s *Service) List(ctx context.Context, a auth.Admin) (Snapshot, error) {
 	result := Snapshot{Locations: make([]Location, 0), ServerTime: now}
 	rows, e := tx.QueryContext(ctx, `SELECT d.id,d.name,d.last_sequence,l.latitude,l.longitude,l.accuracy_m,l.battery_percent,l.captured_at,l.received_at,l.lease_expires_at
  FROM latest_locations l JOIN devices d ON d.id=l.device_id
- WHERE d.family_id=? AND d.revoked_at IS NULL AND d.sharing_session_id IS NOT NULL AND l.lease_expires_at>? ORDER BY d.id`, a.FamilyID, now.UnixMilli())
+ WHERE d.family_id=? AND d.revoked_at IS NULL AND d.sharing_session_id IS NOT NULL ORDER BY d.id`, a.FamilyID)
 	if e != nil {
 		return Snapshot{}, e
 	}
@@ -87,7 +87,7 @@ func (s *Service) List(ctx context.Context, a auth.Admin) (Snapshot, error) {
 		v.CapturedAt = time.UnixMilli(captured).UTC()
 		v.ReceivedAt = time.UnixMilli(received).UTC()
 		v.LeaseExpiresAt = time.UnixMilli(expires).UTC()
-		v.Stale = !v.CapturedAt.After(now.Add(-StaleAfter))
+		v.Stale = !v.CapturedAt.After(now.Add(-StaleAfter)) || !v.LeaseExpiresAt.After(now)
 		result.Locations = append(result.Locations, v)
 	}
 	if e = rows.Err(); e != nil {

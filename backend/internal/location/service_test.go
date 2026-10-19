@@ -147,19 +147,19 @@ func TestLeaseFreshnessCleanupAndReplay(t *testing.T) {
 		t.Fatal("early expiry")
 	}
 	f.now = f.now.Add(time.Millisecond)
-	if len(list(t, f)) != 0 {
-		t.Fatal("expired lease visible")
+	if got := list(t, f); len(got) != 1 || !got[0].Stale {
+		t.Fatal("last position must remain stale after reporting timeout")
 	}
 	if e := f.s.Cleanup(context.Background()); e != nil {
 		t.Fatal(e)
 	}
 	var n int
-	if e := f.db.QueryRow("SELECT COUNT(*) FROM latest_locations").Scan(&n); e != nil || n != 0 {
+	if e := f.db.QueryRow("SELECT COUNT(*) FROM latest_locations").Scan(&n); e != nil || n != 1 {
 		t.Fatal(n, e)
 	}
 	mustUpload(t, f, p, false)
-	if len(list(t, f)) != 0 {
-		t.Fatal("replay resurrected cleaned location")
+	if got := list(t, f); len(got) != 1 || got[0].ReceivedAt != p.CapturedAt.Add(5*time.Minute) {
+		t.Fatal("retry changed retained location")
 	}
 	p.Sequence = 2
 	p.CapturedAt = f.now

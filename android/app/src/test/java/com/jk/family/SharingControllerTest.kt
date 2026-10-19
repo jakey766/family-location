@@ -17,10 +17,12 @@ class SharingControllerTest {
         var cancelled = false
         val stopped = mutableListOf<String>()
         val sent = mutableListOf<Upload>()
+        var failStart = false
+        var startCalls = 0
         var failUpload = false
         var uploadError: ApiException? = null
         var failStop = false
-        override fun start() = "session"
+        override fun start(): String { startCalls++; if (failStart) throw java.io.IOException(); return "session" }
         override fun stop(session: String) { stopped.add(session); if (failStop) throw java.io.IOException() }
         override fun upload(point: Upload): Boolean {
             sent.add(point)
@@ -142,7 +144,52 @@ class SharingControllerTest {
         assertFalse(r.active)
         assertTrue(r.source.stopped)
         r.io.run(); r.main.run()
-        assertTrue(r.message.contains("7 分钟"))
+        assertFalse(r.message.contains("7 分钟"))
+        assertTrue(r.message.contains("网页撤销"))
         assertFalse(r.message.contains("服务器位置已清除"))
     }
+    @Test fun offlineStartKeepsSharingIntentAndRetriesWithoutParallelStarts() {
+        val r = Rig()
+        r.remote.failStart = true
+        r.c.start(); r.c.retry()
+        assertEquals(1, r.io.tasks.size)
+        r.io.run(); r.main.run()
+        assertTrue("temporary network error must not disable background sharing", r.active)
+        assertNull(r.source.callback)
+        r.remote.failStart = false
+        r.c.retry(); r.c.retry()
+        assertEquals(1, r.io.tasks.size)
+        r.io.run(); r.main.run()
+        assertNotNull(r.source.callback)
+        assertEquals(2, r.remote.startCalls)
+    }
+
+    @Test fun serviceReleaseStopsLocalWorkWithoutClosingServerSession() {
+        val r = Rig(); r.start()
+        val late = r.source.callback!!
+        r.c.release()
+        late(r.fix(2000))
+        r.c.retry()
+        assertFalse(r.active)
+        assertTrue(r.source.stopped)
+        assertTrue(r.io.tasks.isEmpty())
+        assertTrue(r.remote.stopped.isEmpty())
+    }
+
+    @Test fun releaseDuringStartCannotStartSourceOrDeleteLastPosition() {
+        val r = Rig(); r.c.start(); r.c.release()
+        r.io.run(); r.main.run()
+        assertNull(r.source.callback)
+        assertTrue(r.remote.stopped.isEmpty())
+        assertTrue(r.io.tasks.isEmpty())
+    }
+
+    @Test fun userStopThenServiceDestructionStillCleansLateStart() {
+        val r = Rig(); r.c.start(); r.c.stop(); r.c.release()
+        r.io.run(); r.main.run()
+        assertEquals("explicit stop must clean a late start even after onDestroy", 1, r.io.tasks.size)
+        r.io.run(); r.main.run()
+        assertEquals(listOf("session"), r.remote.stopped)
+    }
+
 }

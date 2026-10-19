@@ -1,8 +1,11 @@
 # 项目进度
 
-更新日期：2026-10-18。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)、[第四步计划](superpowers/plans/2026-10-15-web-plan.md)及[第五步计划](superpowers/plans/2026-10-18-android-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
+更新日期：2026-10-19。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)、[第四步计划](superpowers/plans/2026-10-15-web-plan.md)及[第五步计划](superpowers/plans/2026-10-18-android-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
 
 ## 当前状态
+
+2026-10-19（vivo X9 锁屏后无位置）：已按用户要求修改代码并生成 0.5.2（versionCode 3）正式包。后端不再按 7 分钟无上报隐藏/删除活跃共享的最后点；网页保留并标记“最后位置 · 更新延迟”，暂时断网保留内存快照并标明共享状态未确认。Android 增加 START_STICKY 恢复用户已开启的共享、高德后台定位通知、共享期间有超时保护的唤醒锁、启动网络失败重试及电池优化入口。在线停止/网页撤销仍清除；离线停止明确提示最后位置仍保留，需网页撤销或联网重新开启后停止。没有远程部署，没有 vivo 锁屏实测结论；具体依据及验证见下文新增记录与[补充设计](superpowers/specs/2026-10-19-background-location-design.md)。
+
 
 2026-10-18（网页添加设备后异常）：用户反馈无设备时地图正常，有设备位置后先提示“地图配置暂时无法读取”，随后提示共享状态无法确认并清空位置。已发现并修正高德 Marker 方法名大小写错误：`setZIndex` 改为官方 JS API 2.0 的 `setzIndex`。原 SDK 替身重复了错误方法名，现已修正，并覆盖空地图添加位置、自动取景、后续位置更新及选择层级。修正前两个用例报 `setZIndex is not a function`，修正后 8 项前端测试、`make web-smoke` 和 `make test` 均通过。尚未更新用户运行的服务，真实高德底图及设备页面需重新构建、重启后复测。
 
@@ -36,12 +39,12 @@
 - 新增设备主动开始/停止、位置 PUT、同家庭管理员 GET；启停、上传和撤销在事务内协调，防止旧请求恢复位置。
 - 同序号重试不更新位置或续租，低序号/时间倒退拒绝；过期清理后保留水位，旧包不能恢复被清理的点。
 - 原始定位与接收时间独立保存，GCJ-02、精度、电量可空；5 分钟 stale，7 分钟租约，时间允许前 24 小时/后 2 分钟。
-- 查询强制过滤停止、撤销与租约到期设备；启动及每分钟清理过期位置，退出取消并等待清理任务。
+- 查询过滤停止/撤销设备；2026-10-19 起租约到期仍保留最后位置并标陈旧，启动及每分钟仅清理停止/撤销设备残留点，退出取消并等待清理任务。
 - 新增 [位置 API](LOCATION_API.md)、第三步设计/计划、`make location-smoke` 和 `make location-demo`，使用项目内隔离库和明确标记的模拟设备。
 
 - 第四步在 `backend/internal/webui/assets/` 新增无构建网页，通过 Go embed 内嵌，同一服务提供 `/` 和 `/assets/`；生产不需要 Node 服务。
 - 登录恢复/退出、Cookie/CSRF、10 秒串行刷新、多人位置卡片、原始时间/stale/电量/精度/坐标、设备列表、确认撤销、一次性配对及 HTTP 复制降级已实现。
-- 网络失败/页面隐藏时清除位置，恢复时重新验证；独立请求代次避免旧响应恢复配对或位置，失败退出可以重试；慢设备接口不延长位置租约的显示时间。
+- 网络失败保留最后快照并提示状态未确认，页面隐藏时清除位置、恢复后重新验证；独立请求代次避免旧响应恢复配对或位置，失败退出可重试；慢设备接口不延长新鲜度。
 - 高德 JS API 2.0 适配支持每设备最新标记/精度圆、选择/查看全部，地图未配置或失败保留文字列表；仅 SDK 替身验证，未使用真实 Key 联调。
 - 可选高德环境配置、管理员 web-config 及固定 HTTPS 目标代理；安全密钥只保留服务端，不转发家庭 Cookie/Authorization，不记录请求密钥。
 - 新增 [网页说明](WEB_UI.md)、网页设计/计划、`web-test` / `web-smoke` 与可选浏览器脚本；测试依赖锁定并安装到 `.cache/`。
@@ -51,7 +54,7 @@
 ### 第五步代码（2026-10-18）
 
 - 新增 Android 原生 Kotlin App + JVM core 模块，锁定 Gradle/AGP/Kotlin/高德版本；提供 Wrapper 下载校验、项目内 SDK/缓存/临时目录、debug 签名及正式签名配置入口。
-- 配对表单、固定服务器地址、设备名、状态、开启/停止、系统定位设置与解除本机配对；配对默认不共享，无开机广播，服务为 START_NOT_STICKY。
+- 配对表单、固定服务器地址、设备名、状态、开启/停止、系统定位设置与解除本机配对；配对默认不共享，无开机广播；2026-10-19 起服务为 START_STICKY，仅恢复用户已开启的共享。
 - 明确隐私说明与高德政策链接，用户同意后才构造 SDK；粗略/精确权限、Android 13 通知拒绝路径及 Android 7.1/8+ 前台服务启动分支，通知提供停止动作。
 - AES-GCM Android Keystore 加密设备凭证，禁用备份；HTTP origin 校验、设备 Bearer 隔离、禁用 Cookie/重定向/隐式重试、10 秒总超时及响应大小上限。
 - 共享代次、最新待发点、原始定位时间与采集序号；停止立即销毁 SDK/使回调失效/清空点，只取消上传，在途 start 串行完成后清理；旧响应不能恢复共享或清除新点。
@@ -153,6 +156,17 @@ DOM 测试不包含真实渲染、触控或 Safari 平台行为。没有截图�
 - 正式产物 `android/app/build/outputs/apk/release/app-release.apk`；传输副本 `bin/family-location-0.5.1-release.apk`，SHA-256 为 `9de164bcbf500f940e489d2ebdd855cf8d4acbb5f5d040a53743b6ee7d8d3cc3`。
 - 独立定向审核通过，无阻塞项；仍需用户在 vivo X9 复测普通打开、上下滚动、输入框/键盘与隐私弹窗。Robolectric 不等于 vivo GPU 或 Android 13 设备验收，软件绘制下的流畅度也需观察。
 
+### vivo X9 后台共享与最后位置（2026-10-19，0.5.2）
+
+- 用户确认出现问题的是 vivo X9 / Android 7.1.2。代码已证明原服务端与网页均在 7 分钟后移除位置；未取得 vivo 系统日志，不能宣称确定其杀进程/省电原因。
+- 先补失败用例，再修改：Go 过期保留/撤销残留清理，Node 过期可见/陈旧状态，DOM 断网快照，Android 启动断网重试、离线停止提示、系统销毁与显式停止。旧版过期/断网相关用例如预期失败后通过。
+- `make test`、`make test-race`、`make vet` 通过；`make web-smoke`（含 8 项 Node 状态/地图测试）与 `make location-smoke` 通过，覆盖超时及服务重启后仍保留、重复请求不续期、停止/撤销立即清除、断网恢复及注销清空。使用项目内临时数据库，没有修改正式数据。
+- `make android-test`：20 项 core、12 项协调层、8 项页面和 12 项 API 25/33 服务生命周期检查，共 52 项通过；普通运行时独立 smoke 用例跳过。`make android-smoke` 实际 Kotlin DeviceApi + Go 隔离后端联调通过。
+- 独立审核发现服务 onDestroy 清空运行控制器后丢失异步停止结果。新增 API 25/33 测试先复现失败，改用服务代次与凭证版本保护结果回调后通过；同时验证迟到停止结果不能覆盖新共享或解除配对提示。只读复核未发现新增重要问题。
+- `make android-release` 成功；最终包 `bin/family-location-0.5.2-release.apk`，与 0.5.1 发布证书一致，可覆盖安装；签名校验通过，包名 `com.jk.family`、versionName 0.5.2 / versionCode 3 / minSdk 25 / targetSdk 35、不可调试。SHA-256：`3b8aaab6523e9c8f9e466735406f0d7f99f2138ecd768409f5021e9ecbad6f5b`。
+- `:app:lintRelease` 最终报告 0 errors / 0 warnings；两项定向抑制说明已放在代码中：家庭位置核心功能的主动电池豁免，以及 stopService 按组件匹配而非对象身份的 lint 误报。`git diff --check` 与 71 个本地文档链接检查通过。编译仍有既有兼容 API 的 deprecated 提示，不能称构建日志零警告。
+- 尚需更新用户服务器代码并构建/重启，再覆盖安装 APK、在 App 允许后台运行，按 [ANDROID.md](ANDROID.md) 的 vivo 设置及 15–30 分钟锁屏流程验收。旧服务已经删除的位置无法找回，需重新上报。系统回收恢复不保证强行停止、重启或厂商清理后继续工作；高德真实 SDK、锁屏耗电、两台 Android 13 与 iPhone 仍未完成验收。
+
 ## 当前启动与检查
 
 需要 Go 1.26.0 或更高版本及 make；烟雾脚本需要 Python 3。以下命令在本机执行：
@@ -175,7 +189,7 @@ curl -i http://127.0.0.1:8080/readyz
 
 ## 未完成与未验证
 
-- 位置后端已完成自动验证；用户正式数据库上的手动共享流程尚未确认，没有真实安卓采集位置。
+- 位置后端已完成自动验证；已收到用户 vivo 实际使用和锁屏反馈，尚无完整真机链路日志和手动验收记录。
 - Kotlin App、高德适配、共享启停和后台策略代码已实现，Debug 和正式签名 APK 均已构建，已有 Android Key/发布签名已配置；真实 SDK/硬件/权限/后台/耗电尚未验收。
 - 网页上述功能代码已实现；2026-10-18 用户反馈空地图可显示、加入设备位置后异常，已修正 Marker 方法名错误待复测。真实高德完整交互、iPhone Safari 窄屏/触控/后台恢复尚未验收。
 - vivo X9（Android 7.1.2）已收到安装/打开后的界面异常反馈，0.5.1 兼容处理待用户复测；Mi 11 Lite、Redmi Note 13 Pro（均 Android 13）尚未进行本项目真机验证。三台的 30 秒／3 分钟效果、耗电和后台稳定性均尚无实测结论。
@@ -183,7 +197,7 @@ curl -i http://127.0.0.1:8080/readyz
 
 ## 下一步
 
-第五步安卓代码和正式签名 APK 已交付，先在 vivo X9 覆盖安装 0.5.1 复测界面，再按计划验收其他功能。安装 `android/app/build/outputs/apk/release/app-release.apk`，按 [ANDROID.md](ANDROID.md) 分别验证三台设备，随后进行第六步公网部署联调。网页先重新构建并重启运行服务，刷新页面，确认有设备位置时地图及列表在多轮自动刷新后仍正常；继续使用 iPhone Safari 验证布局、触控、复制与生命周期，不能把这些待验收事项默认为已通过。
+先更新并重启后端，再在 vivo X9 覆盖安装 `bin/family-location-0.5.2-release.apk`，开启后台运行权限并验证锁屏 15–30 分钟持续上报、超时仍显示最后位置及在线停止清除；同时复测已有界面兼容修正。按 [ANDROID.md](ANDROID.md) 分别验证三台设备，随后进行第六步公网部署联调。网页先重新构建并重启运行服务，刷新页面，确认有设备位置时地图及列表在多轮自动刷新后仍正常；继续使用 iPhone Safari 验证布局、触控、复制与生命周期，不能把这些待验收事项默认为已通过。
 
 后续阶段交付与验收：
 

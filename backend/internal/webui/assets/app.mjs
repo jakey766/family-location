@@ -211,11 +211,10 @@ async function refresh() {
     renderDevices();
   } catch (error) {
     if (current !== generation) return;
-    clearLocations();
     if (!handleError(error)) {
       state.connectionFailed = true;
-      $("sync-status").textContent = "连接中断 · 暂不显示位置";
-      message("未能确认家人的共享状态，已暂时隐藏位置。请检查网络后刷新。");
+      $("sync-status").textContent = "连接中断 · 显示最后位置";
+      message("连接中断，保留最后获取的位置，共享状态尚未确认。请检查网络后刷新。");
     }
   } finally {
     if (current === generation) {
@@ -267,7 +266,7 @@ function renderLocations() {
       element(
         "span",
         `status-badge${stale ? " stale" : ""}`,
-        stale ? "位置已过期" : "最近定位",
+        stale ? "最后位置 · 更新延迟" : "最近定位",
       ),
     );
     const times = element("div", "person-times");
@@ -623,9 +622,9 @@ document.addEventListener("visibilitychange", () =>
 window.addEventListener("offline", () => {
   if (state.session) {
     invalidate();
-    clearLocations();
-    $("sync-status").textContent = "网络已断开 · 暂不显示位置";
-    message("网络已断开，位置暂时隐藏。恢复连接后会重新获取。");
+    state.connectionFailed = true;
+    $("sync-status").textContent = "网络已断开 · 显示最后位置";
+    message("网络已断开，保留最后获取的位置，共享状态尚未确认。恢复连接后会重新获取。");
     scheduleRefresh();
   }
 });

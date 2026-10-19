@@ -21,6 +21,10 @@ internal class CredentialStore(context: Context) {
         get() = prefs.getBoolean("privacy_v1", false)
         set(value) { check(prefs.edit().putBoolean("privacy_v1", value).commit()) }
 
+    var sharingRequested: Boolean
+        get() = prefs.getBoolean("sharing_requested", false)
+        set(value) { check(prefs.edit().putBoolean("sharing_requested", value).commit()) }
+
     fun read(): Credentials? {
         val encoded = prefs.getString("credential", null) ?: return null
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)
@@ -39,7 +43,7 @@ internal class CredentialStore(context: Context) {
         check(prefs.edit().putString("credential", Base64.encodeToString(bytes, Base64.NO_WRAP)).commit())
     }
 
-    fun clear() { check(prefs.edit().remove("credential").commit()) }
+    fun clear() { check(prefs.edit().remove("credential").remove("sharing_requested").commit()) }
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

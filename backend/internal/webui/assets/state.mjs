@@ -5,7 +5,7 @@ export function locationStatus(point, now, staleAfter = 300) {
   const captured = Date.parse(point.captured_at);
   const expires = Date.parse(point.lease_expires_at);
   if (!Number.isFinite(captured) || !Number.isFinite(expires)) return "invalid";
-  if (expires <= now) return "expired";
+  if (expires <= now) return "stale";
   return now - captured >= staleAfter * 1000 ? "stale" : "fresh";
 }
 export function visibleLocations(locations, devices, now) {
@@ -20,7 +20,7 @@ export function visibleLocations(locations, devices, now) {
       Math.abs(p.latitude) <= 90 &&
       Number.isFinite(p.longitude) &&
       Math.abs(p.longitude) <= 180 &&
-      !["expired", "invalid"].includes(locationStatus(p, now)),
+      locationStatus(p, now) !== "invalid",
   );
 }
 export function relativeTime(value, now) {

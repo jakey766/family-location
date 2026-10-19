@@ -1,6 +1,7 @@
 package com.jk.family
 
 import android.Manifest
+import android.app.Notification
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -12,7 +13,7 @@ import com.amap.api.location.AMapLocationClient
 import com.amap.api.location.AMapLocationClientOption
 import com.jk.family.core.Fix
 
-internal class AmapSource(private val context: Context) : PositionSource {
+internal class AmapSource(private val context: Context, private val notification: Notification) : PositionSource {
     private var client: AMapLocationClient? = null
     private val handler = Handler(Looper.getMainLooper())
     private var generation = 0
@@ -41,6 +42,7 @@ internal class AmapSource(private val context: Context) : PositionSource {
                 else onError("定位暂不可用（代码 $code），等待下一次定位；请检查系统定位和高德配置")
             }
         }
+        created.enableBackgroundLocation(2, notification)
         created.startLocation()
     }
 
@@ -65,7 +67,9 @@ internal class AmapSource(private val context: Context) : PositionSource {
         val old = client
         client = null
         handler.removeCallbacksAndMessages(null)
-        try { old?.stopLocation() } finally { old?.onDestroy() }
+        try { old?.stopLocation() } finally {
+            try { old?.disableBackgroundLocation(true) } finally { old?.onDestroy() }
+        }
     }
 
     private fun battery(): Int? {

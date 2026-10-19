@@ -22,8 +22,8 @@ android {
         applicationId = "com.jk.family"
         minSdk = 25
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.5.1"
+        versionCode = 3
+        versionName = "0.5.2"
         manifestPlaceholders["AMAP_API_KEY"] = local.getProperty("AMAP_API_KEY", "")
     }
     signingConfigs {

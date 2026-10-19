@@ -97,7 +97,7 @@ make build-linux GOARCH=arm64
 
 `make auth-smoke` 额外验证管理员 CLI 初始化、v1 升级、登录/CSRF、设备配对及撤销、重启后凭证持续有效；只使用项目内临时数据库，凭证不打印、不保存到文档。
 
-`make location-smoke` 验证真实进程的共享启停、模拟上传、乱序与重试、租约清理、重启持久化及撤销。`make location-demo` 启动隔离的本地模拟服务，供接口/后续网页调试，Ctrl+C 清理；不会向正式数据库写入模拟位置。详见 [位置 API](docs/LOCATION_API.md)。
+`make location-smoke` 验证真实进程的共享启停、模拟上传、乱序与重试、超时后保留最后点、重启持久化及停止/撤销清除。`make location-demo` 启动隔离的本地模拟服务，供接口/后续网页调试，Ctrl+C 清理；不会向正式数据库写入模拟位置。详见 [位置 API](docs/LOCATION_API.md)。
 
 `make web-test` 检查前端时间逻辑和地图 SDK 替身；`make web-smoke` 使用 jsdom + 真实隔离后端验证网页交互，需要 Node.js 22.13+（22 系列）或 24+。依赖和 npm 缓存均在 `.cache/`；它不代替真实浏览器/iPhone 验收。可选浏览器检查和当前限制见 [网页说明](docs/WEB_UI.md)。
 

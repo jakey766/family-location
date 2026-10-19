@@ -84,6 +84,20 @@ class MainActivityTest {
         } finally { controller.pause().stop().destroy() }
     }
 
+    @Test fun backgroundSettingsButtonOpensSystemBatteryExemptionRequest() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try {
+            val activity = controller.get()
+            val action = descendants(activity.findViewById(android.R.id.content))
+                .filterIsInstance<android.widget.Button>().firstOrNull { it.text.toString() == "允许后台运行" }
+            assertNotNull("battery guidance must be available on both target Android generations", action)
+            action!!.performClick()
+            val intent = shadowOf(activity).nextStartedActivity
+            assertEquals(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, intent.action)
+            assertEquals("package:com.jk.family", intent.data.toString())
+        } finally { controller.pause().stop().destroy() }
+    }
+
     private fun descendants(view: View): List<View> = listOf(view) +
         if (view is ViewGroup) (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
 }

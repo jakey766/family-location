@@ -144,21 +144,16 @@ def smoke(db, tmp, password, sensitive):
     with sqlite3.connect(db) as connection:
         connection.execute("UPDATE latest_locations SET lease_expires_at=?", (int(time.time() * 1000) - 1000,))
     with server(db, tmp / "cleanup.log") as base:
-        assert locations(base, admin) == [], "expired location is visible"
-        deadline = time.monotonic() + 5
-        while True:
-            with sqlite3.connect(db) as connection:
-                remaining = connection.execute("SELECT COUNT(*) FROM latest_locations").fetchone()[0]
-            if remaining == 0:
-                break
-            assert time.monotonic() < deadline, "startup cleanup did not remove expired location"
-            time.sleep(0.05)
+        retained = locations(base, admin)
+        assert len(retained) == 1 and retained[0]["stale"], "last location must survive timeout and restart"
+        with sqlite3.connect(db) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM latest_locations").fetchone()[0] == 1
         upload(base, expiring_token, expired, accepted=False)
-        assert locations(base, admin) == [], "duplicate resurrected expired location"
+        assert locations(base, admin) == retained, "retry changed last position or renewed freshness"
         upload(base, expiring_token, point(expiring_session, 2))
         assert len(locations(base, admin)) == 1
     check_logs(tmp, sensitive)
-    print("PASS: 隔离库初始化/配对、默认不共享、唯一最新位置、乱序/重复、原始时间/stale、跨家庭隔离、重启、停止/旧会话、撤销、启动清理、日志脱敏")
+    print("PASS: 隔离库初始化/配对、默认不共享、唯一最新位置、乱序/重复、原始时间/stale、跨家庭隔离、重启、停止/旧会话、撤销、超时及重启保留、日志脱敏")
 
 
 def demo(db, tmp, password, sensitive):

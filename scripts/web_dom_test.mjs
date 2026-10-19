@@ -123,7 +123,7 @@ try {
     "two devices",
   );
   assert.match($("map-title").textContent, /未配置/);
-  assert.match($("family-list").textContent, /位置已过期/);
+  assert.match($("family-list").textContent, /最后位置/);
   assert.match($("family-list").textContent, /电量未知/);
   assert.equal($("login-password").value, "");
   assert.equal(window.localStorage.length + window.sessionStorage.length, 0);
@@ -168,13 +168,14 @@ try {
   console.log(
     "PASS: pairing generation, HTTP clipboard fallback, leave-page invalidation",
   );
-  // Response order and network errors cannot leave unconfirmed location coordinates.
+  // Network failure retains a clearly marked last snapshot; expired points remain stale.
   click("tab-locations");
   window.dispatchEvent(new window.Event("offline"));
-  assert.equal(doc.querySelectorAll(".person-card").length, 0);
+  assert.equal(doc.querySelectorAll(".person-card").length, 2);
+  assert.match($("sync-status").textContent, /最后位置/);
   window.dispatchEvent(new window.Event("online"));
   await until(
-    () => doc.querySelectorAll(".person-card").length === 2,
+    () => !$("refresh").disabled && $("sync-status").textContent.includes("已同步"),
     "online reload",
   );
   const delayedSnapshot = await (await realRequest("/api/v1/locations")).json();
@@ -201,13 +202,14 @@ try {
   await until(() => !$("refresh").disabled, "slow devices response");
   assert.equal(
     doc.querySelectorAll(".person-card").length,
-    0,
-    "slow devices response extended location lease",
+    2,
+    "slow devices response lost last positions",
   );
+  assert.equal(doc.querySelectorAll(".status-badge.stale").length, 2);
   intercept = null;
   click("refresh");
   await until(
-    () => doc.querySelectorAll(".person-card").length === 2,
+    () => !$("refresh").disabled,
     "after slow devices check",
   );
   const saved = await (await realRequest("/api/v1/locations")).json();
@@ -226,14 +228,15 @@ try {
       : next(path, options);
   click("refresh");
   await until(() => !$("refresh").disabled, "expiry refresh");
-  assert.equal(doc.querySelectorAll(".person-card").length, 0);
+  assert.equal(doc.querySelectorAll(".person-card").length, 2);
+  assert.equal(doc.querySelectorAll(".status-badge.stale").length, 2);
   intercept = null;
   click("refresh");
   await until(
-    () => doc.querySelectorAll(".person-card").length === 2,
+    () => !$("refresh").disabled,
     "after expiry check",
   );
-  console.log("PASS: offline clear, server time / lease expiry, recovery");
+  console.log("PASS: offline snapshot, server time / stale last positions, recovery");
   // Malicious names stay literal text. This creates only an isolated test device.
   const session = await (await realRequest("/api/v1/auth/me")).json();
   const freshPair = await (

@@ -41,7 +41,7 @@ for (const engine of process.env.WEB_TEST_BROWSER === "chromium"
     assert.match(await page.locator("#map-title").textContent(), /未配置/);
     assert.match(
       await page.locator("#family-list").textContent(),
-      /位置已过期/,
+      /最后位置/,
     );
     assert.match(await page.locator("#family-list").textContent(), /电量未知/);
     assert.equal(

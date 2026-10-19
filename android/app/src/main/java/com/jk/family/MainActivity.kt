@@ -1,6 +1,7 @@
 package com.jk.family
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.NotificationManager
@@ -11,6 +12,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.net.Uri
 import android.provider.Settings
 import android.text.InputType
 import android.text.util.Linkify
@@ -80,14 +83,16 @@ class MainActivity : Activity() {
         status = label(AppRuntime.message, 18f)
         permissions = label("", 14f)
         start = button("开启共享") { beginSharing() }
-        stop = button("停止共享") { AppRuntime.controller?.stop(); refresh() }
+        stop = button("停止共享") { SharingService.requestStop(this); refresh() }
         button("隐私说明与授权") { showPrivacy(false) }
         button("系统定位设置") { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+        button("允许后台运行") { openBackgroundSettings() }
+        label("锁屏共享：请允许后台运行。vivo 请在电池设置允许本应用后台高耗电，在 i 管家允许自启动，并在最近任务中锁定本应用（名称随系统版本不同）。持续定位会增加耗电。", 14f)
         forget = button("解除本机配对") {
             AlertDialog.Builder(this).setTitle("解除本机配对？")
-                .setMessage("会立即停止本机定位并删除本机凭证。还请在家人网页中撤销这台设备；离线时服务器位置最迟在最后成功上传后 7 分钟隐藏。")
+                .setMessage("会立即停止本机定位并删除本机凭证。还请在家人网页中撤销这台设备；离线时最后位置仍会保留，请在网页撤销设备以清除。")
                 .setNegativeButton("取消", null).setPositiveButton("停止并解除") { _, _ ->
-                    AppRuntime.controller?.stop()
+                    SharingService.requestStop(this)
                     runCatching { store.clear() }.onSuccess {
                         AppRuntime.credentialsRevision++
                         AppRuntime.message = "已解除本机配对，请在网页撤销原设备。"
@@ -114,12 +119,27 @@ class MainActivity : Activity() {
         val fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val location = if (fine) "精确定位已授权" else if (AmapSource.hasLocationPermission(this)) "仅近似位置，精度受限" else "定位尚未授权"
         val notification = if (getSystemService(NotificationManager::class.java).areNotificationsEnabled()) "通知已开启" else "通知未开启，可在 App 内停止共享"
-        permissions.setTextIfChanged(getString(R.string.permission_status, location, notification))
+        val battery = if (getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName))
+            "已允许后台运行；仍需检查厂商省电设置" else "后台运行可能受省电限制，请点击下方允许后台运行"
+        permissions.setTextIfChanged(getString(R.string.permission_status, location, notification) + "\n" + battery)
         start.isEnabled = credentials != null && !AppRuntime.active && !AppRuntime.pairing
-        stop.isEnabled = AppRuntime.active
+        stop.isEnabled = AppRuntime.active || store.sharingRequested
         forget.isEnabled = (credentials != null || credentialError) && !AppRuntime.pairing
         pair.isEnabled = !AppRuntime.pairing
         pair.setTextIfChanged(if (AppRuntime.pairing) "正在配对…" else "配对此手机")
+    }
+
+    // Opt-in exemption for this direct-installed family location app's core lock-screen sharing.
+    @SuppressLint("BatteryLife")
+    private fun openBackgroundSettings() {
+        val power = getSystemService(PowerManager::class.java)
+        val intent = if (power.isIgnoringBatteryOptimizations(packageName))
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        else Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        runCatching { startActivity(intent) }.onFailure {
+            runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+                .onFailure { showMessage("请在手机设置中允许家庭位置后台运行，关闭对此应用的省电限制。") }
+        }
     }
 
     private fun pairDevice() {
@@ -201,7 +221,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("位置共享与隐私")
             .setView(ScrollView(this).apply { addView(text) })
             .setNegativeButton("不同意 / 撤回授权") { _, _ ->
-                AppRuntime.controller?.stop("已撤回隐私授权")
+                SharingService.requestStop(this, "已撤回隐私授权")
                 store.consent = false
                 refresh()
             }

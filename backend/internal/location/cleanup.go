@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Service) Cleanup(ctx context.Context) error {
-	_, e := s.db.ExecContext(ctx, `DELETE FROM latest_locations WHERE lease_expires_at<=?`, s.now().UnixMilli())
+	_, e := s.db.ExecContext(ctx, `DELETE FROM latest_locations WHERE device_id IN (SELECT id FROM devices WHERE revoked_at IS NOT NULL OR sharing_session_id IS NULL)`)
 	return e
 }
 
