@@ -18,6 +18,13 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [25, 33])
 @LooperMode(LooperMode.Mode.PAUSED)
 class SharingServiceTest {
+    @org.junit.Before fun onlineNetwork() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        val manager = app.getSystemService(android.net.ConnectivityManager::class.java)
+        shadowOf(manager).setNetworkCapabilities(manager.activeNetwork,
+            shadowOf(android.net.NetworkCapabilities()).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET))
+    }
+
     @Test fun explicitResumeRequiresSavedIntentAndIsIdempotent() {
         val lifecycle = Robolectric.buildService(TestService::class.java).create()
         val service = lifecycle.get()
@@ -36,9 +43,114 @@ class SharingServiceTest {
         } finally { lifecycle.destroy() }
     }
 
+    @Test fun nightStartKeepsIntentWithoutNetworkOrWakeLockAndStopCancelsAlarm() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).consent = true
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        service.quiet = true
+        try {
+            service.onStartCommand(Intent().setAction(SharingService.START), 0, 1)
+            assertTrue(CredentialStore(service).sharingRequested)
+            assertTrue(AppRuntime.active)
+            assertTrue(AppRuntime.controller!!.paused)
+            assertTrue(service.io.isEmpty())
+            val lock = org.robolectric.shadows.ShadowPowerManager.getLatestWakeLock()
+            assertTrue("waiting overnight must not hold a CPU wake lock", lock == null || !lock.isHeld)
+            assertEquals(1, shadowOf(service.getSystemService(android.app.AlarmManager::class.java)).scheduledAlarms.size)
+            service.onStartCommand(Intent().setAction(SharingService.STOP), 0, 2)
+            assertFalse(CredentialStore(service).sharingRequested)
+            assertTrue(shadowOf(service.getSystemService(android.app.AlarmManager::class.java)).scheduledAlarms.isEmpty())
+        } finally { lifecycle.destroy() }
+    }
+
+    @Test fun failedStartSchedulesOnlyDueRetryAndReleasesNetworkListenerOnDestroy() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).consent = true
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        val manager = service.getSystemService(android.net.ConnectivityManager::class.java)
+        try {
+            service.failStart = true
+            service.onStartCommand(Intent().setAction(SharingService.START), 0, 1)
+            assertEquals(1, shadowOf(manager).networkCallbacks.size)
+            service.io.removeFirst().run()
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(14))
+            assertTrue(service.io.isEmpty())
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(1))
+            assertEquals("service must arrange retry after the failure callback", 1, service.io.size)
+            service.failStart = false
+            service.io.removeFirst().run()
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(1))
+            assertTrue("success leaves no periodic network polling", service.io.isEmpty())
+            val lock = org.robolectric.shadows.ShadowPowerManager.getLatestWakeLock()
+            assertTrue(lock == null || !lock.isHeld)
+        } finally { lifecycle.destroy() }
+        assertTrue(shadowOf(manager).networkCallbacks.isEmpty())
+    }
+
+    @Test fun validationRecoveryAndDefaultNetworkSwitchResetBackoffWithoutOfflineEvent() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).consent = true
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        val manager = service.getSystemService(android.net.ConnectivityManager::class.java)
+        try {
+            service.failStart = true
+            service.onStartCommand(Intent().setAction(SharingService.START), 0, 1)
+            service.io.removeFirst().run()
+            assertEquals(15000L, AppRuntime.controller!!.retryDelayMillis())
+            val callback = shadowOf(manager).networkCallbacks.single()
+            val before = manager.activeNetwork!!
+            val caps = android.net.NetworkCapabilities()
+            shadowOf(caps).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            shadowOf(caps).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            shadowOf(manager).setNetworkCapabilities(before, caps)
+            callback.onCapabilitiesChanged(before, caps)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("validated recovery must bypass the existing delay", 1, service.io.size)
+            service.io.removeFirst().run()
+            callback.onCapabilitiesChanged(before, caps)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue("duplicate capability updates must preserve backoff", service.io.isEmpty())
+            val type = if (manager.activeNetworkInfo!!.type == android.net.ConnectivityManager.TYPE_WIFI)
+                android.net.ConnectivityManager.TYPE_MOBILE else android.net.ConnectivityManager.TYPE_WIFI
+            shadowOf(manager).setActiveNetworkInfo(org.robolectric.shadows.ShadowNetworkInfo.newInstance(
+                android.net.NetworkInfo.DetailedState.CONNECTED, type, 0, true, android.net.NetworkInfo.State.CONNECTED))
+            assertNotEquals(before, manager.activeNetwork)
+            shadowOf(manager).setNetworkCapabilities(manager.activeNetwork, caps)
+            callback.onAvailable(manager.activeNetwork!!)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("switching to a different network must retry immediately", 1, service.io.size)
+        } finally { lifecycle.destroy() }
+    }
+
+    @Test fun boundaryBroadcastPausesAndResumesExistingSessionWithoutStartingNewService() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).consent = true
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        try {
+            service.onStartCommand(Intent().setAction(SharingService.START), 0, 1)
+            service.io.removeFirst().run()
+            service.quiet = true
+            SharingScheduleReceiver().onReceive(service, Intent(SharingSchedule.BOUNDARY))
+            assertTrue(AppRuntime.controller!!.paused)
+            assertTrue(AppRuntime.active)
+            assertTrue(service.io.isEmpty())
+            service.quiet = false
+            SharingScheduleReceiver().onReceive(service, Intent(SharingSchedule.BOUNDARY))
+            assertFalse(AppRuntime.controller!!.paused)
+            assertTrue(service.io.isEmpty())
+        } finally { lifecycle.destroy() }
+    }
+
     // No SDK or network needed: leave IO queued so lifecycle transitions can be inspected.
     class TestService : SharingService() {
         val io = ArrayDeque<Runnable>()
+        var quiet = false
+        internal override fun isQuietNow() = quiet
+        var failStart = false
         var failStop = false
         var failRead = false
         var missingCredentials = false
@@ -48,9 +160,9 @@ class SharingServiceTest {
         }
         internal override fun amapConfigured() = true
         internal override fun createController(remote: SharingRemote, source: PositionSource,
-            status: (String) -> Unit, activeChanged: (Boolean) -> Unit) =
+            status: (String) -> Unit, activeChanged: (Boolean) -> Unit, workChanged: () -> Unit) =
             SharingController(object : SharingRemote {
-                override fun start() = "test-session"
+                override fun start(): String { if (failStart) throw java.io.IOException(); return "test-session" }
                 override fun stop(session: String) { if (failStop) throw java.io.IOException() }
                 override fun upload(point: com.jk.family.core.Upload) = true
                 override fun cancel() {}
@@ -58,7 +170,7 @@ class SharingServiceTest {
                 override fun start(onFix: (com.jk.family.core.Fix) -> Unit, onError: (String) -> Unit) {}
                 override fun interval(millis: Long) {}
                 override fun stop() {}
-            }, { io.add(it) }, { it.run() }, { 0L }, status, activeChanged)
+            }, { io.add(it) }, { it.run() }, android.os.SystemClock::elapsedRealtime, status, activeChanged, { quiet }, workChanged)
     }
 
     @Test fun freshNullIntentDoesNotStartSharing() {

@@ -2,6 +2,7 @@ package com.jk.family
 
 import com.jk.family.core.ApiException
 import com.jk.family.core.Fix
+import com.jk.family.core.RetryBackoff
 import com.jk.family.core.MotionPolicy
 import com.jk.family.core.SharingState
 import com.jk.family.core.Upload
@@ -30,89 +31,198 @@ internal class SharingController(
     private val elapsed: () -> Long,
     private val status: (String) -> Unit,
     private val activeChanged: (Boolean) -> Unit,
+    private val quietNow: () -> Boolean = { false },
+    private val workChanged: () -> Unit = {},
+    private val activityWindow: () -> Long = { 0L },
 ) {
     private val state = SharingState()
+    private val backoff = RetryBackoff()
     private var motion = MotionPolicy()
     private var flight: AtomicBoolean? = null
     private var starting = false
     private var released = false
+    private var sourceRunning = false
+    private var sourceEpoch = 0L
+    @Volatile private var networkAvailable = true
+    private var networkGeneration = 0L
+    private var lastWindow = 0L
+    var paused = false
+        private set
     val active get() = state.active
 
     fun start() {
         if (state.active) return
         released = false
-        val generation = state.begin()
+        state.begin()
+        lastWindow = activityWindow()
         motion = MotionPolicy()
+        backoff.reset()
         activeChanged(true)
-        connect(generation)
+        retry()
+    }
+
+    /** Night is a pause, not stop: keep intent/session, drop accumulated location data. */
+    private fun syncSchedule() {
+        if (!active) return
+        val quiet = quietNow()
+        val window = activityWindow()
+        if (quiet == paused && window == lastWindow) return
+        lastWindow = window
+        paused = quiet
+        backoff.reset()
+        motion = MotionPolicy()
+        stopSource()
+        state.pending?.let { state.rejected(it) }
+        flight?.set(false)
+        if (flight != null) remote.cancel()
+        if (quiet) status("共享已开启 · 夜间暂停（22:00–08:00），08:00 后恢复采集和上报")
+        else {
+            status("共享已开启，正在恢复白天定位")
+            if (state.sessionId != null) startSource(state.generation)
+        }
+        workChanged()
+    }
+
+    fun updateSchedule() {
+        if (!active) return
+        syncSchedule()
+        if (!paused) {
+            if (state.sessionId != null) startSource(state.generation)
+            retry()
+        }
+        workChanged()
+    }
+
+    fun setNetworkAvailable(available: Boolean, recovered: Boolean = false) {
+        if (networkAvailable == available && !recovered) return
+        networkAvailable = available
+        if (available) { networkGeneration++; backoff.reset(); updateSchedule() }
+        workChanged()
+    }
+
+    fun retryDelayMillis(): Long? {
+        if (!active || paused || !networkAvailable || starting || flight != null) return null
+        if (state.sessionId != null && state.pending == null) return null
+        return backoff.remaining(elapsed())
     }
 
     private fun connect(generation: Long) {
         if (starting) return
         starting = true
+        val networkEpoch = networkGeneration
+        val window = activityWindow()
         status("正在建立共享连接…")
         io.execute {
-            val result = runCatching { remote.start() }
+            // IO may have waited behind another request across the quiet-hours boundary.
+            val result = runCatching { if (quietNow() || !networkAvailable || activityWindow() != window) null else remote.start() }
             main.execute {
                 starting = false
                 result.fold(onSuccess = { session ->
-                    if (!state.started(generation, session)) {
+                    if (session != null && !state.started(generation, session)) {
                         if (!released) closeSession(session, "已停止本地共享")
                         return@fold
                     }
-                    status("共享已开启，正在等待首次定位")
-                    try {
-                        source.start({ fix ->
-                            if (state.generation == generation && state.active) {
-                                val point = state.capture(fix)
-                                if (point != null) {
-                                    source.interval(motion.intervalMillis(fix, elapsed()))
-                                    retry()
-                                }
-                            }
-                        }, { message -> if (state.generation == generation && state.active) status(message) })
-                    } catch (_: Exception) {
-                        stop("定位初始化失败，请检查授权和高德配置")
-                    }
+                    if (!active || state.generation != generation) return@fold
+                    backoff.reset()
+                    syncSchedule()
+                    if (session != null && !paused) startSource(generation)
                 }, onFailure = { error ->
-                    if (state.generation == generation && state.active) {
+                    if (state.generation == generation && active) {
+                        syncSchedule()
                         if ((error as? ApiException)?.status in listOf(400, 401, 409))
                             stop(errorMessage(error, "开启失败，请检查配置后重试"))
-                        else status("暂时无法建立连接，后台等待网络恢复后重试")
+                        else if (!paused) {
+                            if (networkEpoch == networkGeneration) backoff.failed(elapsed())
+                            status("暂时无法建立连接，后台逐步延长重试间隔，等待网络恢复")
+                        }
                     }
                 })
+                workChanged()
             }
+        }
+        workChanged()
+    }
+
+    private fun startSource(generation: Long) {
+        if (sourceRunning || paused || !active) return
+        sourceRunning = true
+        val epoch = ++sourceEpoch
+        status("共享已开启，正在等待定位")
+        try {
+            source.start({ fix ->
+                if (state.generation == generation && active && sourceEpoch == epoch) {
+                    syncSchedule()
+                    if (!paused && sourceEpoch == epoch) {
+                        val point = state.capture(fix)
+                        if (point != null) {
+                            source.interval(motion.intervalMillis(fix, elapsed()))
+                            retry()
+                        }
+                    }
+                }
+            }, { message ->
+                if (state.generation == generation && active && sourceEpoch == epoch) {
+                    syncSchedule()
+                    if (!paused) status(message)
+                }
+            })
+        } catch (_: Exception) {
+            stop("定位初始化失败，请检查授权和高德配置")
         }
     }
 
+    private fun stopSource() {
+        sourceEpoch++
+        sourceRunning = false
+        try { source.stop() } catch (_: Exception) { /* callbacks are already invalid */ }
+    }
+
     fun retry() {
-        if (!state.active || flight != null) return
+        if (!active) return
+        syncSchedule()
+        if (paused || !networkAvailable || flight != null || backoff.remaining(elapsed()) > 0) {
+            workChanged()
+            return
+        }
         if (state.sessionId == null) { connect(state.generation); return }
         val point = state.pending ?: return
         val generation = state.generation
         val gate = AtomicBoolean(true)
+        val networkEpoch = networkGeneration
+        val window = activityWindow()
         flight = gate
         io.execute {
-            val result = runCatching { if (gate.get()) remote.upload(point) else false }
+            val result = runCatching { if (gate.get() && !quietNow() && networkAvailable && activityWindow() == window) remote.upload(point) else null }
             main.execute {
                 if (flight === gate) flight = null
-                if (state.generation != generation || !state.active) return@execute
-                result.fold(onSuccess = {
-                    state.acknowledged(point)
-                    status("共享中 · 最近定位 ${java.text.DateFormat.getTimeInstance().format(java.util.Date(point.fix.capturedAtMillis))} · 精度约 ${point.fix.accuracyM.toInt()} 米")
+                if (state.generation != generation || !active) return@execute
+                syncSchedule()
+                if (!gate.get() || paused) { workChanged(); return@execute }
+                result.fold(onSuccess = { accepted ->
+                    if (accepted != null) {
+                        backoff.reset()
+                        state.acknowledged(point)
+                        status("共享中 · 最近定位 ${java.text.DateFormat.getTimeInstance().format(java.util.Date(point.fix.capturedAtMillis))} · 精度约 ${point.fix.accuracyM.toInt()} 米")
+                    }
                 }, onFailure = { error ->
                     when ((error as? ApiException)?.status) {
                         401, 409 -> stop(errorMessage(error, "共享失效，请手动重新开启"))
                         400 -> {
+                            backoff.reset()
                             state.rejected(point)
                             motion = MotionPolicy()
                             status("位置被拒绝，请检查手机时间；等待新的定位")
                         }
-                        else -> status("上传暂未成功，保留最新位置，等待重试")
+                        else -> {
+                            if (networkEpoch == networkGeneration) backoff.failed(elapsed())
+                            status("上传暂未成功，保留最新位置，逐步延长重试间隔（最多 5 分钟）")
+                        }
                     }
                 })
+                workChanged()
             }
         }
+        workChanged()
     }
 
     fun stop(reason: String = "已停止本地共享") {
@@ -120,11 +230,12 @@ internal class SharingController(
         val session = state.stop()
         flight?.set(false)
         // The SDK and pending point are stopped before any remote cleanup.
-        try { source.stop() } catch (_: Exception) { /* local state already invalid */ }
+        stopSource()
         // Let an in-flight start finish so its session can be closed. Only uploads are cancelled.
         if (flight != null) remote.cancel()
         status("$reason。正在尝试清除服务器位置；离线时仍保留最后位置，可在网页撤销设备。")
         activeChanged(false)
+        workChanged()
         if (session != null) closeSession(session, reason)
     }
 
@@ -134,9 +245,10 @@ internal class SharingController(
         released = true
         state.stop()
         flight?.set(false)
-        try { source.stop() } catch (_: Exception) { /* callbacks are already invalid */ }
+        stopSource()
         if (flight != null) remote.cancel()
         activeChanged(false)
+        workChanged()
     }
 
     private fun closeSession(session: String, reason: String) {

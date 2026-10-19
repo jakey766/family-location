@@ -26,6 +26,27 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [25, 33], qualifiers = "w360dp-h640dp-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
 class MainActivityTest {
+    @Test fun exactScheduleSettingsExplainNightPauseAndOpenOnlyOnModernDevices() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try {
+            val activity = controller.get()
+            val views = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<TextView>()
+            assertTrue(views.any { it.text.toString().contains("22:00–08:00") })
+            val button = views.filterIsInstance<android.widget.Button>().firstOrNull { it.text.toString() == "允许准时暂停/恢复" }
+            if (Build.VERSION.SDK_INT < 31) assertNull(button)
+            else {
+                assertNotNull(button)
+                button!!.performClick()
+                val dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+                dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+                shadowOf(Looper.getMainLooper()).idle()
+                val intent = shadowOf(activity).nextStartedActivity
+                assertEquals(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, intent.action)
+                assertEquals("package:com.jk.family", intent.data.toString())
+            }
+        } finally { controller.pause().stop().destroy() }
+    }
+
     @Test fun reopeningResumesSavedSharingWithoutAnotherButtonClick() {
         val app = org.robolectric.RuntimeEnvironment.getApplication()
         CredentialStore(app).apply { consent = true; sharingRequested = true }

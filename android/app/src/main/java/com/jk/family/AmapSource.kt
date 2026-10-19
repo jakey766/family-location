@@ -13,6 +13,7 @@ import com.amap.api.location.AMapLocationClient
 import com.amap.api.location.AMapLocationClientOption
 import com.jk.family.core.Fix
 import com.jk.family.core.MotionPolicy
+import com.jk.family.core.QuietHours
 
 internal class AmapSource(private val context: Context, private val notification: Notification) : PositionSource {
     private var client: AMapLocationClient? = null
@@ -31,6 +32,13 @@ internal class AmapSource(private val context: Context, private val notification
         currentInterval = MotionPolicy.MOVING_INTERVAL
         created.setLocationOption(options())
         created.setLocationListener { location ->
+            if (QuietHours.isQuiet()) {
+                handler.post {
+                    if (generation != epoch || client == null) return@post
+                    onError("夜间暂停定位与上报，08:00 自动恢复")
+                }
+                return@setLocationListener
+            }
             // Copy data while in the SDK callback; do not keep a mutable SDK location.
             val fix = if (location != null && location.errorCode == 0 && location.coordType == "GCJ02") {
                 Fix(location.latitude, location.longitude, location.accuracy.toDouble(), location.time,
@@ -53,8 +61,14 @@ internal class AmapSource(private val context: Context, private val notification
         client?.setLocationOption(options())
     }
 
-    private fun options() = AMapLocationClientOption().apply {
-        locationMode = AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
+    internal fun options() = AMapLocationClientOption().apply {
+        locationMode = if (currentInterval == MotionPolicy.STILL_INTERVAL &&
+            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            AMapLocationClientOption.AMapLocationMode.Battery_Saving
+        } else {
+            // AMap's battery-saving mode does not support approximate-only permission.
+            AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
+        }
         interval = currentInterval
         isOnceLocation = false
         isNeedAddress = false

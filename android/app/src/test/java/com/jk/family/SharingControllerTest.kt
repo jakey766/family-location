@@ -46,7 +46,8 @@ class SharingControllerTest {
         val source = Source()
         var message = ""
         var active = false
-        val c = SharingController(remote, source, io, main, { 1000L }, { message = it }, { active = it })
+        var now = 1000L
+        val c = SharingController(remote, source, io, main, { now }, { message = it }, { active = it })
         fun start() { c.start(); io.run(); main.run() }
         fun fix(time: Long) = Fix(30.0, 110.0, 10.0, time, 80)
     }
@@ -85,6 +86,7 @@ class SharingControllerTest {
         r.source.callback!!(r.fix(2000))
         r.io.run(); r.main.run()
         r.remote.failUpload = false
+        r.now += 15_000
         r.c.retry(); r.io.run(); r.main.run()
         assertEquals(2000L, r.remote.sent.last().fix.capturedAtMillis)
         assertEquals(2L, r.remote.sent.last().sequence)
@@ -157,6 +159,7 @@ class SharingControllerTest {
         assertTrue("temporary network error must not disable background sharing", r.active)
         assertNull(r.source.callback)
         r.remote.failStart = false
+        r.now += 15_000
         r.c.retry(); r.c.retry()
         assertEquals(1, r.io.tasks.size)
         r.io.run(); r.main.run()

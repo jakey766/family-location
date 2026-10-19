@@ -92,6 +92,7 @@ class MainActivity : Activity() {
         button("系统定位设置") { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
         button("允许后台运行") { openBackgroundSettings() }
         if (Build.VERSION.SDK_INT >= 29) button("允许重启后恢复定位") { openBackgroundLocationSettings() }
+        if (Build.VERSION.SDK_INT >= 31) button("允许准时暂停/恢复") { openScheduleSettings() }
         label("开启一次后会记住选择，重新打开 App、手机重启及更新安装包时尝试恢复；停止共享后不再恢复。vivo 请允许后台高耗电、自启动，并在最近任务中锁定本应用。若 i 管家自启动列表没有“家庭位置”，请先安装最新版并打开一次，再检查列表；列表由系统管理，仍找不到时先设置后台高耗电和任务锁定。持续定位会增加耗电。", 14f)
         forget = button("解除本机配对") {
             AlertDialog.Builder(this).setTitle("解除本机配对？")
@@ -105,7 +106,7 @@ class MainActivity : Activity() {
                     refresh()
                 }.show()
         }
-        label("移动时目标约 1 分钟更新，静止约 3 分钟。只保存最新位置；断网和省电限制可能延迟更新。停止后的服务器状态以页面提示为准。", 14f)
+        label("白天移动约 1 分钟更新，静止约 3 分钟并使用低功耗定位；仅近似位置授权时使用兼容模式。每天按手机本地时间 22:00–08:00 暂停采集和上报，保留最后位置；08:00 后恢复。断网暂停请求，联网失败逐步延长重试至最多 5 分钟。停止后的服务器状态以页面提示为准。", 14f)
     }
 
     override fun onResume() {
@@ -160,7 +161,9 @@ class MainActivity : Activity() {
         else if (checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED)
             "已允许重启后恢复定位；仍需允许厂商自启动"
         else "重启自动恢复需允许始终访问位置；未允许时打开 App 会恢复"
-        permissions.setTextIfChanged(getString(R.string.permission_status, location, notification) + "\n" + battery + "\n" + recovery)
+        val schedule = if (SharingSchedule.canScheduleExactly(this)) "已允许定时暂停/恢复；仍受厂商后台限制"
+            else "未允许精确定时：夜间暂停/早晨恢复可能延迟，请点击允许准时暂停/恢复"
+        permissions.setTextIfChanged(getString(R.string.permission_status, location, notification) + "\n" + battery + "\n" + recovery + "\n" + schedule)
         start.isEnabled = credentials != null && !AppRuntime.active && !AppRuntime.pairing
         start.setTextIfChanged(if (AppRuntime.active) "共享已开启" else if (store.sharingRequested) "重试恢复共享" else "开启共享")
         stop.isEnabled = AppRuntime.active || store.sharingRequested
@@ -223,6 +226,17 @@ class MainActivity : Activity() {
                 if (!isDestroyed && !isFinishing) refresh()
             }
         }
+    }
+
+    private fun openScheduleSettings() {
+        if (Build.VERSION.SDK_INT < 31) return
+        AlertDialog.Builder(this).setTitle("准时暂停与恢复")
+            .setMessage("请在系统中允许“闹钟和提醒”，用于每天按手机本地时间 22:00 暂停定位、08:00 恢复。未允许时系统可能延迟切换，夜间收到的位置仍会丢弃且不上报。此授权不会开启声音闹钟，也不会自动开启共享。")
+            .setNegativeButton("暂不设置", null)
+            .setPositiveButton("前往设置") { _, _ ->
+                runCatching { startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName"))) }
+                    .onFailure { showMessage("请在系统应用设置中为家庭位置允许“闹钟和提醒”。") }
+            }.show()
     }
 
     private fun beginSharing() {

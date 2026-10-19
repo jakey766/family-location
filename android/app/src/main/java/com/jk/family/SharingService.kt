@@ -15,7 +15,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.PowerManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import com.jk.family.core.QuietHours
 import android.os.SystemClock
 import com.jk.family.core.DeviceApi
 import com.jk.family.core.Upload
@@ -36,18 +39,66 @@ open class SharingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var controller: SharingController? = null
     private var destroying = false
-    private var wakeLock: PowerManager.WakeLock? = null
-    private val tick = object : Runnable {
-        override fun run() {
-            val current = controller ?: return
-            if (!AmapSource.hasLocationPermission(this@SharingService)) current.stop("定位权限已撤回")
-            else {
-                // Bounded lock, renewed only while the user-requested service is alive.
-                wakeLock?.acquire(10 * 60_000L)
-                current.retry()
-            }
-            if (current.active) handler.postDelayed(this, 15_000)
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var scheduledBoundary: Long? = null
+    private val tick = Runnable {
+        val current = controller
+        if (current != null && current.active) {
+            if (!AmapSource.hasLocationPermission(this)) current.stop("定位权限已撤回")
+            else { current.updateSchedule(); current.retry() }
+            scheduleTick()
         }
+    }
+
+    internal open fun isQuietNow() = QuietHours.isQuiet()
+
+    private fun scheduleTick() {
+        handler.removeCallbacks(tick)
+        val current = controller ?: return
+        if (!current.active || destroying) return
+        val now = System.currentTimeMillis()
+        val boundary = QuietHours.nextBoundary(now)
+        if (scheduledBoundary != boundary) {
+            SharingSchedule.schedule(this, now)
+            scheduledBoundary = boundary
+        }
+        val delay = minOf(boundary - now, current.retryDelayMillis() ?: Long.MAX_VALUE).coerceAtLeast(1)
+        handler.postDelayed(tick, delay)
+    }
+
+    private fun observeNetwork() {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        var observedNetwork: Network? = null
+        var observedValidated = false
+        fun refreshNetwork() {
+            if (destroying) return
+            val network = manager.activeNetwork
+            val capabilities = manager.getNetworkCapabilities(network)
+            val available = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            val validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+            val recovered = available && (network != observedNetwork || (validated && !observedValidated))
+            observedNetwork = network
+            observedValidated = validated
+            // Unvalidated networks may still reach this user's server. Validation is a recovery
+            // signal, not a requirement; duplicate capability callbacks preserve the backoff.
+            controller?.setNetworkAvailable(available, recovered)
+        }
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            private fun refresh() { handler.post { refreshNetwork() } }
+            override fun onAvailable(network: Network) = refresh()
+            override fun onLost(network: Network) = refresh()
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
+        }
+        manager.registerDefaultNetworkCallback(callback)
+        networkCallback = callback
+        refreshNetwork()
+    }
+
+    private fun stopObservingNetwork() {
+        networkCallback?.let { callback ->
+            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback) }
+        }
+        networkCallback = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -56,6 +107,7 @@ open class SharingService : Service() {
         val store = CredentialStore(this)
         if (intent?.action == STOP) {
             store.sharingRequested = false
+            SharingSchedule.cancel(this)
             controller?.stop()
             stopSelf()
             return START_NOT_STICKY
@@ -64,24 +116,24 @@ open class SharingService : Service() {
         if (intent?.action != START && !(restoring && store.sharingRequested)) {
             stopSelf(); return START_NOT_STICKY
         }
-        if (controller?.active == true) return START_STICKY
+        if (controller?.active == true) {
+            controller?.updateSchedule()
+            scheduleTick()
+            return START_STICKY
+        }
         val runtimeGeneration = ++AppRuntime.serviceGeneration
         val credentialsRevision = AppRuntime.credentialsRevision
         try {
             val credentials = readCredentials()
             if (credentials == null || !store.consent || !AmapSource.hasLocationPermission(this) || !amapConfigured()) {
                 store.sharingRequested = false
+                SharingSchedule.cancel(this)
                 error("Sharing prerequisites are missing")
             }
             createChannel()
             if (Build.VERSION.SDK_INT >= 29) startForeground(1, notification("正在开启共享"), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
             else startForeground(1, notification("正在开启共享"))
             store.sharingRequested = true
-            wakeLock = getSystemService(PowerManager::class.java)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "family:sharing").apply {
-                    setReferenceCounted(false)
-                    acquire(10 * 60_000L)
-                }
             val api = DeviceApi(credentials.origin, credentials.token)
             val remote = object : SharingRemote {
                 override fun start() = api.start()
@@ -104,15 +156,17 @@ open class SharingService : Service() {
                     if (!active && controller === created && !destroying) {
                         store.sharingRequested = false
                         handler.removeCallbacks(tick)
-                        releaseWakeLock()
+                        SharingSchedule.cancel(this)
+                        stopObservingNetwork()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
                     }
-                })
+                }, { scheduleTick() })
             controller = created
             AppRuntime.controller = created
+            observeNetwork()
             created.start()
-            handler.postDelayed(tick, 15_000)
+            scheduleTick()
         } catch (_: Exception) {
             // A transient platform/Keystore failure is not a user stop. Stop this instance
             // without an immediate sticky retry loop; the next recovery entry can try again.
@@ -123,7 +177,7 @@ open class SharingService : Service() {
                 "共享仍已开启，但服务暂未恢复；请重新打开 App 重试，并检查系统后台限制。"
             else "无法启动共享，请检查配对、隐私授权、定位权限和高德 Key。"
             stopForeground(STOP_FOREGROUND_REMOVE)
-            releaseWakeLock()
+            stopObservingNetwork()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -134,7 +188,7 @@ open class SharingService : Service() {
         destroying = true
         handler.removeCallbacks(tick)
         controller?.release()
-        releaseWakeLock()
+        stopObservingNetwork()
         if (AppRuntime.controller === controller) {
             AppRuntime.controller = null
             AppRuntime.active = false
@@ -143,17 +197,12 @@ open class SharingService : Service() {
         super.onDestroy()
     }
 
-    private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
-    }
-
     internal open fun readCredentials() = CredentialStore(this).read()
 
     internal open fun createController(remote: SharingRemote, source: PositionSource,
-        status: (String) -> Unit, activeChanged: (Boolean) -> Unit) =
-        SharingController(remote, source, AppRuntime.io, { handler.post(it) },
-            SystemClock::elapsedRealtime, status, activeChanged)
+        status: (String) -> Unit, activeChanged: (Boolean) -> Unit, workChanged: () -> Unit) =
+        SharingController(remote, source, NetworkWorkExecutor(this, AppRuntime.io), { handler.post(it) },
+            SystemClock::elapsedRealtime, status, activeChanged, { isQuietNow() }, workChanged, { QuietHours.activityWindow() })
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -183,9 +232,15 @@ open class SharingService : Service() {
 
         fun requestResume(context: Context, fromBackground: Boolean = false) {
             val store = CredentialStore(context)
-            if (!store.sharingRequested || AppRuntime.active) return
+            if (!store.sharingRequested) { SharingSchedule.cancel(context); return }
+            if (AppRuntime.active) {
+                SharingSchedule.schedule(context)
+                AppRuntime.controller?.updateSchedule()
+                return
+            }
             if (!store.consent || !AmapSource.hasLocationPermission(context)) {
                 store.sharingRequested = false
+                SharingSchedule.cancel(context)
                 AppRuntime.message = "共享已停止：隐私或定位授权已撤回，请授权后重新开启。"
                 return
             }
@@ -194,6 +249,7 @@ open class SharingService : Service() {
                 AppRuntime.message = "共享仍已开启，等待打开 App 恢复；如需重启后自动恢复，请允许始终访问位置。"
                 return
             }
+            SharingSchedule.schedule(context)
             val intent = Intent(context, SharingService::class.java).setAction(RESUME)
             AppRuntime.message = "共享已开启，正在恢复服务…"
             try {
@@ -208,6 +264,7 @@ open class SharingService : Service() {
         @SuppressLint("ImplicitSamInstance")
         fun requestStop(context: Context, reason: String = "已停止本地共享") {
             CredentialStore(context).sharingRequested = false
+            SharingSchedule.cancel(context)
             val current = AppRuntime.controller
             if (current != null) current.stop(reason)
             else {
