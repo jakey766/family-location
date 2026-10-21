@@ -41,6 +41,7 @@ open class SharingService : Service() {
     private var destroying = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var scheduledBoundary: Long? = null
+    private val retryTimer by lazy { WakeupTimer(this, WakeupTimer.RETRY) { tick.run() } }
     private val tick = Runnable {
         val current = controller
         if (current != null && current.active) {
@@ -55,14 +56,17 @@ open class SharingService : Service() {
     private fun scheduleTick() {
         handler.removeCallbacks(tick)
         val current = controller ?: return
-        if (!current.active || destroying) return
+        if (!current.active || destroying) { retryTimer.cancel(); return }
         val now = System.currentTimeMillis()
         val boundary = QuietHours.nextBoundary(now)
         if (scheduledBoundary != boundary) {
             SharingSchedule.schedule(this, now)
             scheduledBoundary = boundary
         }
-        val delay = minOf(boundary - now, current.retryDelayMillis() ?: Long.MAX_VALUE).coerceAtLeast(1)
+        val retryDelay = current.retryDelayMillis()
+        if (retryDelay != null) retryTimer.schedule(SystemClock.elapsedRealtime() + retryDelay.coerceAtLeast(1))
+        else retryTimer.cancel()
+        val delay = minOf(boundary - now, retryDelay ?: Long.MAX_VALUE).coerceAtLeast(1)
         handler.postDelayed(tick, delay)
     }
 
@@ -142,8 +146,10 @@ open class SharingService : Service() {
                 override fun cancel() = api.cancel()
             }
             lateinit var created: SharingController
-            created = createController(remote, AmapSource(applicationContext, notification("正在后台共享位置")),
+            created = createController(remote, ScheduledPositionSource(applicationContext,
+                AmapSource(applicationContext, notification("正在后台采集位置"))),
                 { message ->
+                    android.util.Log.i("FamilyLocation", "state $message")
                     // Stop completion may arrive after onDestroy. A new run or pairing invalidates it.
                     if (AppRuntime.serviceGeneration == runtimeGeneration && AppRuntime.credentialsRevision == credentialsRevision) {
                         AppRuntime.message = message
@@ -156,6 +162,7 @@ open class SharingService : Service() {
                     if (!active && controller === created && !destroying) {
                         store.sharingRequested = false
                         handler.removeCallbacks(tick)
+                        retryTimer.cancel()
                         SharingSchedule.cancel(this)
                         stopObservingNetwork()
                         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -187,6 +194,7 @@ open class SharingService : Service() {
     override fun onDestroy() {
         destroying = true
         handler.removeCallbacks(tick)
+        retryTimer.cancel()
         controller?.release()
         stopObservingNetwork()
         if (AppRuntime.controller === controller) {
@@ -201,7 +209,7 @@ open class SharingService : Service() {
 
     internal open fun createController(remote: SharingRemote, source: PositionSource,
         status: (String) -> Unit, activeChanged: (Boolean) -> Unit, workChanged: () -> Unit) =
-        SharingController(remote, source, NetworkWorkExecutor(this, AppRuntime.io), { handler.post(it) },
+        SharingController(remote, source, NetworkWorkExecutor(this, AppRuntime.io), WakefulMainExecutor(this),
             SystemClock::elapsedRealtime, status, activeChanged, { isQuietNow() }, workChanged, { QuietHours.activityWindow() })
 
     private fun createChannel() {

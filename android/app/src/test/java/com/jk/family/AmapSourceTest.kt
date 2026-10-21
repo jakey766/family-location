@@ -38,7 +38,7 @@ class AmapSourceTest {
         val options = source.options()
         assertEquals(mode, options.locationMode)
         assertEquals(interval, options.interval)
-        assertFalse(options.isOnceLocation)
+        assertTrue("each alarm must trigger a fresh bounded sample instead of SDK delayed polling", options.isOnceLocation)
         assertFalse(options.isNeedAddress)
         assertTrue(options.isOffset)
         assertFalse(options.isLocationCacheEnable)

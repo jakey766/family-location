@@ -17,7 +17,7 @@ import java.util.concurrent.RejectedExecutionException
 @Config(sdk = [25, 33])
 @LooperMode(LooperMode.Mode.PAUSED)
 class NetworkWorkExecutorTest {
-    @Test fun queuedWorkHoldsLockOnlyDuringExecution() {
+    @Test fun queuedWorkBridgesSamplingToNetworkWithoutHoldingLockAfterWork() {
         val queue = ArrayDeque<Runnable>()
         val executor = NetworkWorkExecutor(RuntimeEnvironment.getApplication()) { queue.add(it) }
         var lock: PowerManager.WakeLock? = null
@@ -26,10 +26,13 @@ class NetworkWorkExecutorTest {
             assertTrue(lock!!.isHeld)
             assertEquals("family:network", shadowOf(lock!!).tag)
         }
-        assertNull(ShadowPowerManager.getLatestWakeLock())
+        val handoff = ShadowPowerManager.getLatestWakeLock()
+        assertNotNull("upload queued by a location callback must keep CPU awake until execution", handoff)
+        assertTrue(handoff.isHeld)
         queue.removeFirst().run()
         assertNotNull(lock)
         assertFalse(lock!!.isHeld)
+        assertFalse(handoff.isHeld)
     }
 
     @Test fun exceptionalWorkReleasesItsLockAndPropagatesFailure() {
@@ -71,13 +74,25 @@ class NetworkWorkExecutorTest {
         }
     }
 
-    @Test fun rejectedWorkNeverAcquiresLock() {
+    @Test fun rejectedWorkReleasesHandoffLock() {
         val executor = NetworkWorkExecutor(RuntimeEnvironment.getApplication()) { throw RejectedExecutionException() }
         try {
             executor.execute { fail("rejected work must not run") }
             fail("executor rejection must propagate")
         } catch (_: RejectedExecutionException) {
-            assertNull(ShadowPowerManager.getLatestWakeLock())
+            assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
         }
+    }
+
+    @Test fun expiredHandoffDoesNotLeaveRunningWorkUnprotected() {
+        val queue = ArrayDeque<Runnable>()
+        val executor = NetworkWorkExecutor(RuntimeEnvironment.getApplication()) { queue.add(it) }
+        executor.execute { assertTrue(ShadowPowerManager.getLatestWakeLock().isHeld) }
+        val handoff = ShadowPowerManager.getLatestWakeLock()
+        assertNotNull(handoff)
+        SystemClock.sleep(15_001)
+        assertFalse(handoff.isHeld)
+        queue.removeFirst().run()
+        assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
     }
 }

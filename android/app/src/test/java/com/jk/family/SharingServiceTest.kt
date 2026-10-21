@@ -75,6 +75,9 @@ class SharingServiceTest {
             service.onStartCommand(Intent().setAction(SharingService.START), 0, 1)
             assertEquals(1, shadowOf(manager).networkCallbacks.size)
             service.io.removeFirst().run()
+            assertTrue(shadowOf(service.getSystemService(android.app.AlarmManager::class.java)).scheduledAlarms.any {
+                shadowOf(it.operation).savedIntent.action == WakeupTimer.RETRY
+            })
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(14))
             assertTrue(service.io.isEmpty())
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(1))
@@ -145,6 +148,29 @@ class SharingServiceTest {
         } finally { lifecycle.destroy() }
     }
 
+    @Test fun sampleBroadcastWakesExistingSourceButNeverDuringNightOrAfterStop() {
+        val lifecycle = Robolectric.buildService(TestService::class.java).create()
+        val service = lifecycle.get()
+        CredentialStore(service).consent = true
+        shadowOf(service.application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        try {
+            service.onStartCommand(Intent().setAction(SharingService.START), 0, 1)
+            service.io.removeFirst().run()
+            WakeWorkReceiver().onReceive(service, Intent(WakeupTimer.SAMPLE))
+            assertEquals(1, service.sampleWakes)
+            assertTrue(service.io.isEmpty())
+            service.quiet = true
+            WakeWorkReceiver().onReceive(service, Intent(WakeupTimer.SAMPLE))
+            assertTrue(AppRuntime.controller!!.paused)
+            assertEquals(1, service.sampleWakes)
+            service.onStartCommand(Intent().setAction(SharingService.STOP), 0, 2)
+            service.quiet = false
+            WakeWorkReceiver().onReceive(service, Intent(WakeupTimer.SAMPLE))
+            assertFalse(AppRuntime.active)
+            assertEquals(1, service.sampleWakes)
+        } finally { lifecycle.destroy() }
+    }
+
     // No SDK or network needed: leave IO queued so lifecycle transitions can be inspected.
     class TestService : SharingService() {
         val io = ArrayDeque<Runnable>()
@@ -154,6 +180,7 @@ class SharingServiceTest {
         var failStop = false
         var failRead = false
         var missingCredentials = false
+        var sampleWakes = 0
         internal override fun readCredentials(): Credentials? {
             if (failRead) throw java.security.KeyStoreException("temporarily unavailable")
             return if (missingCredentials) null else Credentials("http://localhost", "test", "test")
@@ -170,6 +197,7 @@ class SharingServiceTest {
                 override fun start(onFix: (com.jk.family.core.Fix) -> Unit, onError: (String) -> Unit) {}
                 override fun interval(millis: Long) {}
                 override fun stop() {}
+                override fun wake() { sampleWakes++ }
             }, { io.add(it) }, { it.run() }, android.os.SystemClock::elapsedRealtime, status, activeChanged, { quiet }, workChanged)
     }
 

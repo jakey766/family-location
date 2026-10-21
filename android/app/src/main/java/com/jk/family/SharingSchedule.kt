@@ -9,7 +9,7 @@ import android.os.Build
 import com.jk.family.core.QuietHours
 import java.time.ZoneId
 
-/** Only the two daily boundaries wake the device; ordinary upload retry uses a Handler. */
+/** Local day/night boundaries are independent of monotonic sample/retry alarms. */
 internal object SharingSchedule {
     const val BOUNDARY = "com.jk.family.QUIET_HOURS_BOUNDARY"
 
@@ -30,7 +30,10 @@ internal object SharingSchedule {
         alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pending)
     }
 
-    fun cancel(context: Context) { context.getSystemService(AlarmManager::class.java).cancel(pending(context)) }
+    fun cancel(context: Context) {
+        context.getSystemService(AlarmManager::class.java).cancel(pending(context))
+        WakeupTimer.cancelAll(context)
+    }
 
     private fun pending(context: Context) = PendingIntent.getBroadcast(context, 22,
         Intent(context, SharingScheduleReceiver::class.java).setAction(BOUNDARY),

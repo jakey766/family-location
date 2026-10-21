@@ -29,7 +29,6 @@ internal class AmapSource(private val context: Context, private val notification
         val epoch = ++generation
         val created = AMapLocationClient(context)
         client = created
-        currentInterval = MotionPolicy.MOVING_INTERVAL
         created.setLocationOption(options())
         created.setLocationListener { location ->
             if (QuietHours.isQuiet()) {
@@ -70,7 +69,8 @@ internal class AmapSource(private val context: Context, private val notification
             AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
         }
         interval = currentInterval
-        isOnceLocation = false
+        isOnceLocation = true
+        httpTimeOut = 10_000L
         isNeedAddress = false
         isOffset = true
         isLocationCacheEnable = false

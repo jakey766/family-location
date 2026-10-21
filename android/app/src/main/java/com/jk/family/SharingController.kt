@@ -20,6 +20,7 @@ internal interface PositionSource {
     fun start(onFix: (Fix) -> Unit, onError: (String) -> Unit)
     fun interval(millis: Long)
     fun stop()
+    fun wake() {}
 }
 
 /** All public methods and location callbacks run on the main executor. IO is serial. */
@@ -91,6 +92,11 @@ internal class SharingController(
             retry()
         }
         workChanged()
+    }
+
+    fun wake() {
+        updateSchedule()
+        if (active && !paused) source.wake()
     }
 
     fun setNetworkAvailable(available: Boolean, recovered: Boolean = false) {

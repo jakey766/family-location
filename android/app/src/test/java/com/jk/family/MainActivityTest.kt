@@ -32,7 +32,7 @@ class MainActivityTest {
             val activity = controller.get()
             val views = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<TextView>()
             assertTrue(views.any { it.text.toString().contains("22:00–08:00") })
-            val button = views.filterIsInstance<android.widget.Button>().firstOrNull { it.text.toString() == "允许准时暂停/恢复" }
+            val button = views.filterIsInstance<android.widget.Button>().firstOrNull { it.text.toString() == "允许定时定位/暂停" }
             if (Build.VERSION.SDK_INT < 31) assertNull(button)
             else {
                 assertNotNull(button)

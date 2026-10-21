@@ -30,6 +30,12 @@
             </intent-filter>
         </activity>
         <service android:name=".SharingService" android:foregroundServiceType="location" android:stopWithTask="false" android:exported="false" />
+        <receiver android:name=".WakeWorkReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.jk.family.SAMPLE" />
+                <action android:name="com.jk.family.RETRY" />
+            </intent-filter>
+        </receiver>
         <receiver android:name=".SharingScheduleReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="com.jk.family.QUIET_HOURS_BOUNDARY" />
