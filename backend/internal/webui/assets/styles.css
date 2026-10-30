@@ -869,3 +869,23 @@ input::placeholder {
     scroll-behavior: auto !important;
   }
 }
+
+.family-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:24px; }
+.family-toolbar label { margin:0; }
+select { font:inherit; min-height:44px; border:1px solid var(--line); border-radius:9px; background:white; color:var(--ink); padding:10px; max-width:100%; }
+.family-toolbar select { flex:1; min-width:140px; }
+.family-toolbar input { flex-basis:100%; font-size:12px; }
+.family-toolbar .footnote { flex-basis:100%; }
+.management-sidebar { display:flex; flex-direction:column; gap:20px; min-width:0; }
+.management-sidebar > * { width:100%; }
+.owned-card { margin-top:28px; }
+.device-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:4px; max-width:48%; }
+.device-actions .text-button { white-space:normal; }
+.settings-card { background:white; border:1px solid var(--line); border-radius:18px; padding:26px; max-width:620px; margin:auto; }
+.settings-card h2 { margin:16px 0 8px; overflow-wrap:anywhere; }
+.settings-card fieldset { border:0; padding:0; margin:20px 0; min-width:0; }
+.settings-card label { margin-top:20px; }
+.settings-card .primary { margin-top:24px; width:100%; }
+.check-label { display:flex; align-items:center; gap:12px; min-height:44px; }
+.check-label input { width:22px; height:22px; }
+@media(max-width:680px) { .management-sidebar { width:100%; } .settings-card { padding:20px; } }

@@ -53,7 +53,9 @@ class DeviceApi(baseUrl: String, val token: String? = null) {
         request("POST", "/api/v1/device/sharing/stop", mapOf("sharing_session_id" to sessionId), 204)
     }
 
-    fun upload(upload: Upload): Boolean {
+    fun upload(upload: Upload): Boolean = uploadResult(upload).accepted
+
+    fun uploadResult(upload: Upload): UploadResult {
         val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date(upload.fix.capturedAtMillis))
@@ -69,7 +71,7 @@ class DeviceApi(baseUrl: String, val token: String? = null) {
         ), 200)
         val accepted = json["accepted"]
         if (accepted == null || !accepted.isJsonPrimitive || !accepted.asJsonPrimitive.isBoolean) throw ApiException(200, "invalid_response")
-        return accepted.asBoolean
+        return UploadResult(accepted.asBoolean, DeviceConfig.parse(json["config"]))
     }
 
     fun cancel() { inFlight.get()?.cancel() }

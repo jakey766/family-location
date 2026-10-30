@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Open initializes a persistent database. Only one process should own this file.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
@@ -94,6 +94,11 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		}
 		if next == 3 {
 			if _, err := tx.ExecContext(ctx, locationSchema); err != nil {
+				return fmt.Errorf("migration %d: %w", next, err)
+			}
+		}
+		if next == 4 {
+			if _, err := tx.ExecContext(ctx, familySchema); err != nil {
 				return fmt.Errorf("migration %d: %w", next, err)
 			}
 		}

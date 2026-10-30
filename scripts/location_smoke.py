@@ -64,7 +64,8 @@ def point(session, sequence, age_minutes=0, offset=0):
 def upload(base, token, payload, accepted=True, status=200):
     result, _ = request(base, "PUT", "/api/v1/device/location", status, payload, token=token)
     if status == 200:
-        assert result == {"accepted": accepted}, "unexpected upload acceptance"
+        assert result["accepted"] == accepted, "unexpected upload acceptance"
+        assert result["config"] == {"version": 1, "moving_interval_seconds": 120, "stationary_interval_seconds": 300, "moving_high_accuracy": False, "quiet_hours_start": "22:00", "quiet_hours_end": "08:00"}, "default config missing"
 
 
 def locations(base, admin):
@@ -91,9 +92,9 @@ def smoke(db, tmp, password, sensitive):
         request(base, "GET", "/api/v1/locations", 401, token=token)
         session = start(base, token, sensitive)
         assert locations(base, admin) == [], "start unexpectedly invented a location"
-        first = point(session, 1, age_minutes=7)
+        first = point(session, 1, age_minutes=9)
         upload(base, token, first)
-        latest = point(session, 2, age_minutes=6, offset=0.001)
+        latest = point(session, 2, age_minutes=8, offset=0.001)
         latest["battery_percent"] = 62
         sensitive.extend((first["latitude"], first["longitude"], latest["latitude"], latest["longitude"]))
         upload(base, token, latest)
@@ -142,7 +143,7 @@ def smoke(db, tmp, password, sensitive):
 
     # Manipulate only our stopped, disposable database to avoid waiting seven minutes.
     with sqlite3.connect(db) as connection:
-        connection.execute("UPDATE latest_locations SET lease_expires_at=?", (int(time.time() * 1000) - 1000,))
+        connection.execute("UPDATE latest_locations SET received_at=?, lease_expires_at=?", (int(time.time() * 1000) - 421000, int(time.time() * 1000) - 1000))
     with server(db, tmp / "cleanup.log") as base:
         retained = locations(base, admin)
         assert len(retained) == 1 and retained[0]["stale"], "last location must survive timeout and restart"

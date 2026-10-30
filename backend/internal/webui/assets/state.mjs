@@ -1,7 +1,10 @@
 export function estimateServerTime(clock, now = performance.now()) {
   return clock.serverTime + Math.max(0, now - clock.receivedAt);
 }
-export function locationStatus(point, now, staleAfter = 300) {
+// Match the API: five-minute stationary sampling plus a two-minute margin.
+export function locationStatus(point, now, staleAfter = 420) {
+  const configured = point.stale_after_seconds;
+  if (Number.isInteger(configured) && configured >= 420 && configured <= 3720) staleAfter = configured;
   const captured = Date.parse(point.captured_at);
   const expires = Date.parse(point.lease_expires_at);
   if (!Number.isFinite(captured) || !Number.isFinite(expires)) return "invalid";

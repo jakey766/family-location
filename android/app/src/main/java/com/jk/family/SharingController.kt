@@ -1,5 +1,7 @@
 package com.jk.family
 
+import com.jk.family.core.DeviceConfig
+import com.jk.family.core.UploadResult
 import com.jk.family.core.ApiException
 import com.jk.family.core.Fix
 import com.jk.family.core.RetryBackoff
@@ -13,12 +15,14 @@ internal interface SharingRemote {
     fun start(): String
     fun stop(session: String)
     fun upload(point: Upload): Boolean
+    fun uploadResult(point: Upload): UploadResult = UploadResult(upload(point))
     fun cancel()
 }
 
 internal interface PositionSource {
     fun start(onFix: (Fix) -> Unit, onError: (String) -> Unit)
     fun interval(millis: Long)
+    fun accuracy(high: Boolean) {}
     fun stop()
     fun wake() {}
 }
@@ -35,10 +39,16 @@ internal class SharingController(
     private val quietNow: () -> Boolean = { false },
     private val workChanged: () -> Unit = {},
     private val activityWindow: () -> Long = { 0L },
+    initialConfig: DeviceConfig = DeviceConfig(),
+    private val configChanged: (DeviceConfig) -> Boolean = { true },
 ) {
     private val state = SharingState()
     private val backoff = RetryBackoff()
-    private var motion = MotionPolicy()
+    var config = initialConfig
+        private set
+    var configPersistencePending = false
+        private set
+    private var motion = MotionPolicy(config)
     private var flight: AtomicBoolean? = null
     private var starting = false
     private var released = false
@@ -56,7 +66,7 @@ internal class SharingController(
         released = false
         state.begin()
         lastWindow = activityWindow()
-        motion = MotionPolicy()
+        motion = MotionPolicy(config)
         backoff.reset()
         activeChanged(true)
         retry()
@@ -71,14 +81,14 @@ internal class SharingController(
         lastWindow = window
         paused = quiet
         backoff.reset()
-        motion = MotionPolicy()
+        motion = MotionPolicy(config)
         stopSource()
         state.pending?.let { state.rejected(it) }
         flight?.set(false)
         if (flight != null) remote.cancel()
-        if (quiet) status("共享已开启 · 夜间暂停（22:00–08:00），08:00 后恢复采集和上报")
+        if (quiet) reportStatus("共享已开启 · 暂停时段（${config.quietHoursStart}–${config.quietHoursEnd}），${config.quietHoursEnd} 后恢复采集和上报")
         else {
-            status("共享已开启，正在恢复白天定位")
+            reportStatus("共享已开启，正在恢复定位")
             if (state.sessionId != null) startSource(state.generation)
         }
         workChanged()
@@ -117,7 +127,7 @@ internal class SharingController(
         starting = true
         val networkEpoch = networkGeneration
         val window = activityWindow()
-        status("正在建立共享连接…")
+        reportStatus("正在建立共享连接…")
         io.execute {
             // IO may have waited behind another request across the quiet-hours boundary.
             val result = runCatching { if (quietNow() || !networkAvailable || activityWindow() != window) null else remote.start() }
@@ -139,7 +149,7 @@ internal class SharingController(
                             stop(errorMessage(error, "开启失败，请检查配置后重试"))
                         else if (!paused) {
                             if (networkEpoch == networkGeneration) backoff.failed(elapsed())
-                            status("暂时无法建立连接，后台逐步延长重试间隔，等待网络恢复")
+                            reportStatus("暂时无法建立连接，后台逐步延长重试间隔，等待网络恢复")
                         }
                     }
                 })
@@ -153,15 +163,17 @@ internal class SharingController(
         if (sourceRunning || paused || !active) return
         sourceRunning = true
         val epoch = ++sourceEpoch
-        status("共享已开启，正在等待定位")
+        reportStatus("共享已开启，正在等待定位")
         try {
+            updateSourcePolicy()
             source.start({ fix ->
                 if (state.generation == generation && active && sourceEpoch == epoch) {
                     syncSchedule()
                     if (!paused && sourceEpoch == epoch) {
                         val point = state.capture(fix)
                         if (point != null) {
-                            source.interval(motion.intervalMillis(fix, elapsed()))
+                            motion.intervalMillis(fix, elapsed())
+                            updateSourcePolicy()
                             retry()
                         }
                     }
@@ -169,11 +181,40 @@ internal class SharingController(
             }, { message ->
                 if (state.generation == generation && active && sourceEpoch == epoch) {
                     syncSchedule()
-                    if (!paused) status(message)
+                    if (!paused) reportStatus(message)
                 }
             })
         } catch (_: Exception) {
             stop("定位初始化失败，请检查授权和高德配置")
+        }
+    }
+
+    private fun updateSourcePolicy() {
+        source.interval(motion.currentInterval)
+        source.accuracy(motion.moving && config.movingHighAccuracy)
+    }
+
+    private fun reportStatus(message: String) {
+        status(message + if (configPersistencePending)
+            " · 当前配置已生效但尚未保存到手机，重启可能恢复旧配置；后续成功上报会重试保存。" else "")
+    }
+
+    private fun applyConfig(next: DeviceConfig) {
+        val changed = next.version > config.version
+        if (changed) {
+            config = next
+            motion.config = next
+            configPersistencePending = true
+        }
+        if (configPersistencePending) {
+            // A successful upload remains acknowledged even if local storage fails. The callback
+            // first applies the runtime clock, then confirms its durable write independently.
+            configPersistencePending = !runCatching { configChanged(config) }.getOrDefault(false)
+        }
+        if (changed) {
+            syncSchedule()
+            if (!paused) updateSourcePolicy()
+            workChanged()
         }
     }
 
@@ -198,17 +239,18 @@ internal class SharingController(
         val window = activityWindow()
         flight = gate
         io.execute {
-            val result = runCatching { if (gate.get() && !quietNow() && networkAvailable && activityWindow() == window) remote.upload(point) else null }
+            val result = runCatching { if (gate.get() && !quietNow() && networkAvailable && activityWindow() == window) remote.uploadResult(point) else null }
             main.execute {
                 if (flight === gate) flight = null
                 if (state.generation != generation || !active) return@execute
                 syncSchedule()
                 if (!gate.get() || paused) { workChanged(); return@execute }
-                result.fold(onSuccess = { accepted ->
-                    if (accepted != null) {
+                result.fold(onSuccess = { response ->
+                    if (response != null) {
                         backoff.reset()
                         state.acknowledged(point)
-                        status("共享中 · 最近定位 ${java.text.DateFormat.getTimeInstance().format(java.util.Date(point.fix.capturedAtMillis))} · 精度约 ${point.fix.accuracyM.toInt()} 米")
+                        applyConfig(response.config ?: config)
+                        if (!paused) reportStatus("共享中 · 最近定位 ${java.text.DateFormat.getTimeInstance().format(java.util.Date(point.fix.capturedAtMillis))} · 精度约 ${point.fix.accuracyM.toInt()} 米")
                     }
                 }, onFailure = { error ->
                     when ((error as? ApiException)?.status) {
@@ -216,12 +258,12 @@ internal class SharingController(
                         400 -> {
                             backoff.reset()
                             state.rejected(point)
-                            motion = MotionPolicy()
-                            status("位置被拒绝，请检查手机时间；等待新的定位")
+                            motion = MotionPolicy(config)
+                            reportStatus("位置被拒绝，请检查手机时间；等待新的定位")
                         }
                         else -> {
                             if (networkEpoch == networkGeneration) backoff.failed(elapsed())
-                            status("上传暂未成功，保留最新位置，逐步延长重试间隔（最多 5 分钟）")
+                            reportStatus("上传暂未成功，保留最新位置，逐步延长重试间隔（最多 5 分钟）")
                         }
                     }
                 })
@@ -239,7 +281,7 @@ internal class SharingController(
         stopSource()
         // Let an in-flight start finish so its session can be closed. Only uploads are cancelled.
         if (flight != null) remote.cancel()
-        status("$reason。正在尝试清除服务器位置；离线时仍保留最后位置，可在网页撤销设备。")
+        reportStatus("$reason。正在尝试清除服务器位置；离线时仍保留最后位置，可在网页撤销设备。")
         activeChanged(false)
         workChanged()
         if (session != null) closeSession(session, reason)
@@ -264,8 +306,8 @@ internal class SharingController(
             main.execute {
                 if (state.active || state.generation != generation) return@execute
                 val error = result.exceptionOrNull() as? ApiException
-                if (result.isSuccess || error?.status == 401) status("$reason。服务器位置已清除。")
-                else status("$reason。未确认服务器清除，最后位置仍会保留；请在网页撤销设备，或联网重新开启后停止共享。")
+                if (result.isSuccess || error?.status == 401) reportStatus("$reason。服务器位置已清除。")
+                else reportStatus("$reason。未确认服务器清除，最后位置仍会保留；请在网页撤销设备，或联网重新开启后停止共享。")
             }
         }
     }

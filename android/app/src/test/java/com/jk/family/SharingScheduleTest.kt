@@ -37,6 +37,23 @@ class SharingScheduleTest {
         assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
     }
 
+    @Test fun persistedMinuteBoundaryAndZoneChangeReplaceExistingAlarm() {
+        val prefs = app.getSharedPreferences("device", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("credential", "encrypted-identity").commit()
+        val store = CredentialStore(app)
+        store.sharingRequested = true
+        val config = com.jk.family.core.DeviceConfig(60, 600, false, "12:15", "13:45", 2)
+        assertTrue(store.saveConfig(config, store.configBinding()))
+        val now = Instant.parse("2026-10-30T12:00:00Z").toEpochMilli()
+        SharingSchedule.schedule(app, now, ZoneId.of("UTC"))
+        assertEquals(Instant.parse("2026-10-30T12:15:00Z").toEpochMilli(), shadowOf(alarms).scheduledAlarms.single().triggerAtTime)
+        SharingSchedule.schedule(app, now, ZoneId.of("Asia/Shanghai"))
+        assertEquals(Instant.parse("2026-10-31T04:15:00Z").toEpochMilli(), shadowOf(alarms).scheduledAlarms.single().triggerAtTime)
+        store.sharingRequested = false
+        SharingSchedule.schedule(app, now, ZoneId.of("UTC"))
+        assertTrue(shadowOf(alarms).scheduledAlarms.isEmpty())
+    }
+
     @Test fun missingExactAlarmPermissionFallsBackWithoutEnablingSharing() {
         if (Build.VERSION.SDK_INT >= 31) org.robolectric.shadows.ShadowAlarmManager.setCanScheduleExactAlarms(false)
         SharingSchedule.schedule(app)

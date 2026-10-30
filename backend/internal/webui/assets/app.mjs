@@ -7,10 +7,12 @@ import {
   errorMessage,
 } from "./state.mjs";
 import { createMapView } from "./map.mjs";
+import { createManagement } from "./management.mjs";
 const $ = (id) => document.getElementById(id);
 const state = {
   session: null,
   devices: [],
+  ownedDevices: [],
   locations: [],
   clock: null,
   selected: null,
@@ -54,6 +56,30 @@ const mapView = createMapView(
   },
   selectPerson,
 );
+const management = createManagement({
+  request, element, generation: () => generation,
+  active: () => Boolean(state.session && !state.logoutPending && !suspended),
+  onSelect: () => changeFamily(),
+  onChanged: (text) => { changeFamily(); message(text); },
+  onView: switchView,
+  onError: (error) => { if (!handleError(error)) message(errorMessage(error)); },
+  onRevoke: openConfirm,
+});
+function changeFamily() {
+  invalidate();
+  clearPairing();
+  clearLocations();
+  closeConfirm(false);
+  state.devices = [];
+  state.ownedDevices = [];
+  renderDevices();
+  if (state.view === "settings") switchView("devices");
+  message();
+  $("sync-status").textContent = "正在获取当前家庭…";
+  $("refresh").disabled = false;
+  refresh();
+  if (!state.config) loadMapConfig();
+}
 function now() {
   return state.clock ? estimateServerTime(state.clock) : Date.now();
 }
@@ -61,8 +87,9 @@ function message(text = "") {
   $("app-message").textContent = text;
   $("app-message").hidden = !text;
 }
-function invalidate() {
+function invalidate({preserveEditor = false} = {}) {
   generation++;
+  if (!preserveEditor) management.clearEditor();
   clearTimeout(pollTimer);
   for (const controller of requests) controller.abort();
   requests.clear();
@@ -122,6 +149,8 @@ function showLogin(text = "") {
   closeConfirm(false);
   state.session = null;
   state.devices = [];
+  state.ownedDevices = [];
+  management.reset();
   state.config = null;
   state.clock = null;
   state.connectionFailed = false;
@@ -148,6 +177,11 @@ function handleError(error) {
 async function enterSession(session) {
   invalidate();
   state.session = session;
+  clearLocations();
+  state.devices = [];
+  state.ownedDevices = [];
+  management.reset();
+  renderDevices();
   state.logoutPending = false;
   state.config = null;
   $("username").textContent = session.user.username;
@@ -159,8 +193,22 @@ async function enterSession(session) {
   message();
   switchView("locations");
   const current = generation;
+  $("refresh").disabled = true;
+  try {
+    if (!await management.load(session.user.family_id) || current !== generation) return;
+  } catch (error) {
+    if (current === generation && !handleError(error)) {
+      message(error.status === 404 ? "此家庭不存在或当前账号无权访问，请选择有权限的家庭。" : errorMessage(error));
+      $("refresh").disabled = false;
+    }
+    return;
+  }
   // Start data retrieval independently of third-party map loading.
   refresh();
+  loadMapConfig();
+}
+async function loadMapConfig() {
+  const current = generation;
   try {
     const config = await request("/api/v1/web-config");
     if (current !== generation || suspended) return;
@@ -174,22 +222,23 @@ async function enterSession(session) {
 }
 function scheduleRefresh() {
   clearTimeout(pollTimer);
-  if (state.session && !state.logoutPending && !suspended)
+  if (state.session && management.familyId && !state.logoutPending && !suspended)
     pollTimer = setTimeout(refresh, (state.config?.poll_seconds || 10) * 1000);
 }
 async function refresh() {
-  if (!state.session || state.logoutPending || suspended || refreshing) return;
+  if (!state.session || !management.familyId || state.logoutPending || suspended || refreshing) return;
   refreshing = true;
   clearTimeout(pollTimer);
   $("refresh").disabled = true;
   const current = generation;
   try {
-    const [positionResponse, devices] = await Promise.all([
-      request("/api/v1/locations").then((snapshot) => ({
+    const [positionResponse, devices, owned] = await Promise.all([
+      request(management.familyPath("/api/v1/locations")).then((snapshot) => ({
         snapshot,
         receivedAt: performance.now(),
       })),
-      request("/api/v1/devices"),
+      request(management.familyPath("/api/v1/devices")),
+      request("/api/v1/devices?scope=owned"),
     ]);
     if (current !== generation) return;
     const { snapshot, receivedAt } = positionResponse;
@@ -197,11 +246,12 @@ async function refresh() {
     if (
       !Number.isFinite(serverTime) ||
       !Array.isArray(snapshot.locations) ||
-      !Array.isArray(devices.devices)
+      !Array.isArray(devices.devices) || !Array.isArray(owned.devices)
     )
       throw new Error("invalid response");
     state.clock = { serverTime, receivedAt };
     state.devices = devices.devices;
+    state.ownedDevices = owned.devices;
     state.locations = snapshot.locations;
     state.synced = true;
     if (state.connectionFailed) message();
@@ -212,6 +262,7 @@ async function refresh() {
   } catch (error) {
     if (current !== generation) return;
     if (!handleError(error)) {
+      if (error.status === 404) { clearLocations(); state.devices=[]; state.ownedDevices=[]; renderDevices(); }
       state.connectionFailed = true;
       $("sync-status").textContent = "连接中断 · 显示最后位置";
       message("连接中断，保留最后获取的位置，共享状态尚未确认。请检查网络后刷新。");
@@ -385,20 +436,32 @@ function renderDevices() {
       button.type = "button";
       button.setAttribute("aria-label", `撤销 ${device.name}`);
       button.addEventListener("click", () => openConfirm(device, button));
-      row.append(button);
+      const actions = element("div", "device-actions");
+      actions.append(button);
+      const config = element("button", "text-button config-device", "配置");
+      config.type="button";
+      config.addEventListener("click", () => management.configure(device));
+      const remove = element("button", "text-button remove-member", "移出当前家庭");
+      remove.type="button";
+      remove.addEventListener("click", () => management.membership(device,false));
+      actions.append(config, remove);
+      row.append(actions);
     }
     fragment.append(row);
   }
   $("devices-list").replaceChildren(fragment);
   $("devices-empty").hidden = state.devices.length > 0;
+  management.renderOwned(state.ownedDevices, state.devices);
 }
 function switchView(view) {
   if (state.view !== view) clearPairing();
+  if (state.view === "settings" && view !== "settings") management.clearEditor();
   state.view = view;
   $("locations-view").hidden = view !== "locations";
   $("devices-view").hidden = view !== "devices";
+  $("settings-view").hidden = view !== "settings";
   $("page-heading").textContent =
-    view === "locations" ? "家人在哪里" : "一起，把家人连起来";
+    view === "locations" ? "家人在哪里" : view === "settings" ? "设备上报配置" : "一起，把家人连起来";
   for (const name of ["locations", "devices"]) {
     if (view === name) $(`tab-${name}`).setAttribute("aria-current", "page");
     else $(`tab-${name}`).removeAttribute("aria-current");
@@ -409,7 +472,7 @@ function openConfirm(device, button) {
   pendingRevoke = device;
   previousFocus = button;
   $("confirm-description").textContent =
-    `撤销“${device.name}”后，将立即停止显示其位置。设备需要重新配对才能继续共享。`;
+    `撤销“${device.name}”后，所有家庭将立即停止显示其位置。设备需要重新配对才能继续共享。`;
   $("confirm-overlay").hidden = false;
   $("cancel-revoke").focus();
 }
@@ -448,6 +511,7 @@ $("confirm-revoke").addEventListener("click", async () => {
     state.devices = state.devices.map((d) =>
       d.id === target.id ? { ...d, revoked_at: new Date().toISOString() } : d,
     );
+    state.ownedDevices = state.ownedDevices.map((d) => d.id === target.id ? {...d,revoked_at:new Date().toISOString()} : d);
     state.locations = state.locations.filter((p) => p.device_id !== target.id);
     closeConfirm();
     renderLocations();
@@ -500,6 +564,7 @@ $("logout").addEventListener("click", async () => {
   mapView.destroy();
   closeConfirm(false);
   $("devices-list").replaceChildren();
+  management.reset();
   $("logout").disabled = true;
   $("refresh").disabled = true;
   try {
@@ -518,14 +583,14 @@ $("logout").addEventListener("click", async () => {
   }
 });
 $("generate-pairing").addEventListener("click", async () => {
-  if (!state.session || state.logoutPending) return;
+  if (!state.session || !management.familyId || state.logoutPending) return;
   const current = generation;
   clearPairing();
   const pairingRequest = pairingGeneration;
   $("generate-pairing").disabled = true;
   message();
   try {
-    const pairing = await request("/api/v1/pairing-codes", {
+    const pairing = await request(management.familyPath("/api/v1/pairing-codes"), {
       method: "POST",
       body: {},
     });
@@ -576,7 +641,8 @@ $("empty-add").addEventListener("click", () => switchView("devices"));
 $("fit-map").addEventListener("click", () => mapView.fit());
 $("refresh").addEventListener("click", () => {
   message();
-  refresh();
+  if (state.session && !management.familyId && !state.logoutPending) resume();
+  else refresh();
 });
 async function restore() {
   const current = generation;
@@ -598,6 +664,7 @@ function suspend() {
   mapView.destroy();
   closeConfirm(false);
   $("devices-list").replaceChildren();
+  management.reset();
   $("sync-status").textContent = "重新打开后更新共享状态";
 }
 function resume() {
@@ -612,6 +679,7 @@ function resume() {
   invalidate();
   restore();
 }
+window.addEventListener("popstate", () => { if (state.session) resume(); });
 window.addEventListener("pagehide", suspend);
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) resume();
@@ -621,7 +689,8 @@ document.addEventListener("visibilitychange", () =>
 );
 window.addEventListener("offline", () => {
   if (state.session) {
-    invalidate();
+    invalidate({preserveEditor:true});
+    management.offline();
     state.connectionFailed = true;
     $("sync-status").textContent = "网络已断开 · 显示最后位置";
     message("网络已断开，保留最后获取的位置，共享状态尚未确认。恢复连接后会重新获取。");
@@ -629,7 +698,9 @@ window.addEventListener("offline", () => {
   }
 });
 window.addEventListener("online", () => {
-  if (!state.logoutPending) resume();
+  if (state.logoutPending) return;
+  if (state.session && management.familyId && !suspended) { refresh(); if (!state.config) loadMapConfig(); }
+  else resume();
 });
 setInterval(tick, 1000);
 restore();

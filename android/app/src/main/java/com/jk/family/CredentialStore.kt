@@ -1,5 +1,6 @@
 package com.jk.family
 
+import com.jk.family.core.DeviceConfig
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -40,10 +41,29 @@ internal class CredentialStore(context: Context) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val bytes = cipher.iv + cipher.doFinal(plain.toString().toByteArray(Charsets.UTF_8))
-        check(prefs.edit().putString("credential", Base64.encodeToString(bytes, Base64.NO_WRAP)).commit())
+        check(prefs.edit().putString("credential", Base64.encodeToString(bytes, Base64.NO_WRAP)).remove("device_config").remove("device_config_binding").commit())
     }
 
-    fun clear() { check(prefs.edit().remove("credential").remove("sharing_requested").commit()) }
+    fun clear() { check(prefs.edit().remove("credential").remove("sharing_requested").remove("device_config").remove("device_config_binding").commit()) }
+
+    // Bind to the opaque encrypted credential, never persist the bearer token outside Keystore encryption.
+    fun configBinding(): String? = prefs.getString("credential", null)
+
+    fun readConfig(): DeviceConfig {
+        val binding = configBinding() ?: return DeviceConfig()
+        if (prefs.getString("device_config_binding", null) != binding) return DeviceConfig()
+        return DeviceConfig.decode(prefs.getString("device_config", null)) ?: DeviceConfig()
+    }
+
+    fun saveConfig(config: DeviceConfig, expectedBinding: String?): Boolean {
+        if (expectedBinding == null || configBinding() != expectedBinding) return false
+        val current = readConfig()
+        if (config.version < current.version || (config.version == current.version && config != current)) return false
+        // commit(false) can still update SharedPreferences memory. Equal values must perform
+        // another commit when the controller has no confirmed durable write for this version.
+        return prefs.edit().putString("device_config", config.encode())
+            .putString("device_config_binding", expectedBinding).commit()
+    }
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

@@ -100,6 +100,20 @@ class DeviceApiTest {
         assertTrue(json["battery_percent"].isJsonNull)
     }
 
+    @Test fun uploadParsesConfigEvenWhenDuplicateAndIgnoresInvalidOptionalConfig() {
+        var response = """{"accepted":false,"config":{"moving_interval_seconds":60,"stationary_interval_seconds":600,"moving_high_accuracy":true,"quiet_hours_start":"12:15","quiet_hours_end":"13:45","version":8}}"""
+        server.createContext("/api/v1/device/location") { it.reply(200, response) }
+        val api = DeviceApi(origin, "device-token")
+        val point = Upload("session", 1, Fix(30.0, 120.0, 5.0, 1700000000000L, null))
+        val result = api.uploadResult(point)
+        assertFalse(result.accepted)
+        assertEquals(DeviceConfig(60, 600, true, "12:15", "13:45", 8), result.config)
+        for (body in listOf("""{"accepted":true}""", response.replace("600", "30"), response.replace("true", "7"))) {
+            response = body
+            assertNull(api.uploadResult(point).config)
+        }
+    }
+
     @Test fun refusesRedirectAndNeverLeaksBearerToRedirectDestination() {
         var redirected = false
         server.createContext("/api/v1/device/sharing/start") {

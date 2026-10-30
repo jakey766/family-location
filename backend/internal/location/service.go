@@ -13,7 +13,7 @@ import (
 
 const (
 	LeaseDuration         = 7 * time.Minute
-	StaleAfter            = 5 * time.Minute
+	StaleAfter            = 7 * time.Minute // Five-minute stationary sampling plus a two-minute margin.
 	MaxCaptureAge         = 24 * time.Hour
 	FutureTolerance       = 2 * time.Minute
 	MaxSequence     int64 = 1<<53 - 1
@@ -45,21 +45,23 @@ type Input struct {
 	CapturedAt       time.Time `json:"captured_at"`
 }
 type UploadResult struct {
-	Accepted bool `json:"accepted"`
+	Accepted bool              `json:"accepted"`
+	Config   auth.DeviceConfig `json:"config"`
 }
 type Location struct {
-	DeviceID         string    `json:"device_id"`
-	Name             string    `json:"name"`
-	Sequence         int64     `json:"sequence"`
-	Latitude         float64   `json:"latitude"`
-	Longitude        float64   `json:"longitude"`
-	CoordinateSystem string    `json:"coordinate_system"`
-	AccuracyM        float64   `json:"accuracy_m"`
-	BatteryPercent   *int      `json:"battery_percent"`
-	CapturedAt       time.Time `json:"captured_at"`
-	ReceivedAt       time.Time `json:"received_at"`
-	LeaseExpiresAt   time.Time `json:"lease_expires_at"`
-	Stale            bool      `json:"stale"`
+	DeviceID          string    `json:"device_id"`
+	Name              string    `json:"name"`
+	Sequence          int64     `json:"sequence"`
+	Latitude          float64   `json:"latitude"`
+	Longitude         float64   `json:"longitude"`
+	CoordinateSystem  string    `json:"coordinate_system"`
+	AccuracyM         float64   `json:"accuracy_m"`
+	BatteryPercent    *int      `json:"battery_percent"`
+	CapturedAt        time.Time `json:"captured_at"`
+	ReceivedAt        time.Time `json:"received_at"`
+	LeaseExpiresAt    time.Time `json:"lease_expires_at"`
+	Stale             bool      `json:"stale"`
+	StaleAfterSeconds int       `json:"stale_after_seconds"`
 }
 type Snapshot struct {
 	Locations  []Location `json:"locations"`

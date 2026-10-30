@@ -18,6 +18,7 @@ import android.os.Looper
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import com.jk.family.core.DeviceConfig
 import com.jk.family.core.QuietHours
 import android.os.SystemClock
 import com.jk.family.core.DeviceApi
@@ -41,6 +42,8 @@ open class SharingService : Service() {
     private var destroying = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var scheduledBoundary: Long? = null
+    @Volatile private var effectiveConfig = DeviceConfig()
+    private var configBinding: String? = null
     private val retryTimer by lazy { WakeupTimer(this, WakeupTimer.RETRY) { tick.run() } }
     private val tick = Runnable {
         val current = controller
@@ -51,16 +54,16 @@ open class SharingService : Service() {
         }
     }
 
-    internal open fun isQuietNow() = QuietHours.isQuiet()
+    internal open fun isQuietNow() = QuietHours.isQuiet(config = effectiveConfig)
 
     private fun scheduleTick() {
         handler.removeCallbacks(tick)
         val current = controller ?: return
         if (!current.active || destroying) { retryTimer.cancel(); return }
         val now = System.currentTimeMillis()
-        val boundary = QuietHours.nextBoundary(now)
+        val boundary = QuietHours.nextBoundary(now, config = effectiveConfig)
         if (scheduledBoundary != boundary) {
-            SharingSchedule.schedule(this, now)
+            SharingSchedule.schedule(this, now, config = effectiveConfig)
             scheduledBoundary = boundary
         }
         val retryDelay = current.retryDelayMillis()
@@ -134,6 +137,8 @@ open class SharingService : Service() {
                 SharingSchedule.cancel(this)
                 error("Sharing prerequisites are missing")
             }
+            effectiveConfig = store.readConfig()
+            configBinding = store.configBinding()
             createChannel()
             if (Build.VERSION.SDK_INT >= 29) startForeground(1, notification("正在开启共享"), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
             else startForeground(1, notification("正在开启共享"))
@@ -143,11 +148,12 @@ open class SharingService : Service() {
                 override fun start() = api.start()
                 override fun stop(session: String) = api.stop(session)
                 override fun upload(point: Upload) = api.upload(point)
+                override fun uploadResult(point: Upload) = api.uploadResult(point)
                 override fun cancel() = api.cancel()
             }
             lateinit var created: SharingController
             created = createController(remote, ScheduledPositionSource(applicationContext,
-                AmapSource(applicationContext, notification("正在后台采集位置"))),
+                AmapSource(applicationContext, notification("正在后台采集位置"), { isQuietNow() }), { isQuietNow() }),
                 { message ->
                     android.util.Log.i("FamilyLocation", "state $message")
                     // Stop completion may arrive after onDestroy. A new run or pairing invalidates it.
@@ -210,7 +216,14 @@ open class SharingService : Service() {
     internal open fun createController(remote: SharingRemote, source: PositionSource,
         status: (String) -> Unit, activeChanged: (Boolean) -> Unit, workChanged: () -> Unit) =
         SharingController(remote, source, NetworkWorkExecutor(this, AppRuntime.io), WakefulMainExecutor(this),
-            SystemClock::elapsedRealtime, status, activeChanged, { isQuietNow() }, workChanged, { QuietHours.activityWindow() })
+            SystemClock::elapsedRealtime, status, activeChanged, { isQuietNow() }, workChanged,
+            { QuietHours.activityWindow(config = effectiveConfig) }, effectiveConfig, { config ->
+                effectiveConfig = config
+                val saved = runCatching { CredentialStore(this).saveConfig(config, configBinding) }.getOrDefault(false)
+                scheduledBoundary = null
+                SharingSchedule.schedule(this, config = effectiveConfig)
+                saved
+            })
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java).createNotificationChannel(

@@ -48,11 +48,22 @@ test("expired positions remain visible while revoked devices are removed", () =>
   assert.deepEqual(visibleLocations(locations, devices, now + 60_000).map(p => p.device_id), ["a", "c"]);
   assert.deepEqual(visibleLocations(locations, [], now), []);
 });
+test("five-minute sampling has a two-minute freshness margin", () => {
+  const sample = point({
+    captured_at: new Date(now).toISOString(),
+    received_at: new Date(now + 30_000).toISOString(),
+    lease_expires_at: new Date(now + 450_000).toISOString(),
+  });
+  for (const age of [300_000, 330_000, 419_999]) {
+    assert.equal(locationStatus(sample, now + age), "fresh", `capture age ${age}`);
+  }
+  assert.equal(locationStatus(sample, now + 420_000), "stale");
+});
 test("stale is based on original capture, not recent receipt", () => {
   assert.equal(
     locationStatus(
       point({
-        captured_at: new Date(now - 300_000).toISOString(),
+        captured_at: new Date(now - 420_000).toISOString(),
         received_at: new Date(now).toISOString(),
       }),
       now,
@@ -77,4 +88,12 @@ test("time labels and pairing countdown handle skew and exact expiry", () => {
   assert.equal(remainingSeconds("bad", now), 0);
   assert.match(errorMessage({ status: 429 }), /频繁/);
   assert.match(errorMessage({ status: 403 }), /刷新/);
+});
+
+
+test("device configuration controls stale threshold", () => {
+  const now = Date.parse("2026-10-30T10:00:00Z");
+  const p = {captured_at:"2026-10-30T09:52:00Z", lease_expires_at:"2026-10-30T10:04:00Z", stale_after_seconds:720};
+  assert.equal(locationStatus(p, now), "fresh");
+  assert.equal(locationStatus(p, now + 240000), "stale");
 });

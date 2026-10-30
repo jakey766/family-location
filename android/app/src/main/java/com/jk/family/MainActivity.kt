@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private lateinit var forget: Button
     private lateinit var device: TextView
     private lateinit var status: TextView
+    private lateinit var configuration: TextView
     private lateinit var permissions: TextView
     private var credentials: Credentials? = null
     private var credentialError = false
@@ -106,7 +107,8 @@ class MainActivity : Activity() {
                     refresh()
                 }.show()
         }
-        label("白天移动目标约 1 分钟更新，静止约 3 分钟并使用低功耗定位；仅近似位置授权时使用兼容模式。每次定时唤醒后短时定位和上传，等待期间允许休眠；系统深度省电可能延长间隔。每天按手机本地时间 22:00–08:00 暂停采集和上报，保留最后位置；08:00 后恢复。断网暂停请求，联网失败逐步延长重试间隔至最多 5 分钟，系统唤醒限制可能进一步延迟。停止后的服务器状态以页面提示为准。", 14f)
+        configuration = label("", 14f)
+        label("每次定时唤醒后短时定位和上传，等待期间允许休眠；系统深度省电可能延长间隔。仅近似位置授权时使用兼容模式，精度受限。暂停时保留最后位置，结束后仅恢复新采集。断网暂停请求，联网失败逐步延长重试间隔至最多 5 分钟。网页保存后，下次设备上报才获取新配置；暂停期间先按本机旧时段恢复上报。停止后的服务器状态以页面提示为准。", 14f)
     }
 
     override fun onResume() {
@@ -152,6 +154,9 @@ class MainActivity : Activity() {
         device.setTextIfChanged(credentials?.let { "已配对：${it.name}\n${it.origin}" }
             ?: if (credentialError) "凭证无法读取，请解除本机配对后重新配对。" else "尚未配对")
         status.setTextIfChanged(AppRuntime.message)
+        val config = AppRuntime.controller?.config ?: store.readConfig()
+        configuration.setTextIfChanged("当前有效配置（版本 ${config.version}）：移动约 ${config.movingIntervalSeconds / 60} 分钟，静止约 ${config.stationaryIntervalSeconds / 60} 分钟；移动高精度${if (config.movingHighAccuracy) "开启" else "关闭"}，静止使用低功耗定位。每天按手机本地时间 ${config.quietHoursStart}–${config.quietHoursEnd} 暂停采集和上报。" +
+            if (AppRuntime.controller?.configPersistencePending == true) " 当前配置尚未保存到手机，重启可能恢复旧配置；后续成功上报会重试保存。" else "")
         val fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val location = if (fine) "精确定位已授权" else if (AmapSource.hasLocationPermission(this)) "仅近似位置，精度受限" else "定位尚未授权"
         val notification = if (getSystemService(NotificationManager::class.java).areNotificationsEnabled()) "通知已开启" else "通知未开启，可在 App 内停止共享"
@@ -162,7 +167,7 @@ class MainActivity : Activity() {
             "已允许重启后恢复定位；仍需允许厂商自启动"
         else "重启自动恢复需允许始终访问位置；未允许时打开 App 会恢复"
         val schedule = if (SharingSchedule.canScheduleExactly(this)) "已允许定时定位及暂停/恢复；深度省电仍可能延长间隔"
-            else "未允许精确定时：采样和夜间切换可能延迟，请点击允许定时定位/暂停"
+            else "未允许精确定时：采样和暂停切换可能延迟，请点击允许定时定位/暂停"
         permissions.setTextIfChanged(getString(R.string.permission_status, location, notification) + "\n" + battery + "\n" + recovery + "\n" + schedule)
         start.isEnabled = credentials != null && !AppRuntime.active && !AppRuntime.pairing
         start.setTextIfChanged(if (AppRuntime.active) "共享已开启" else if (store.sharingRequested) "重试恢复共享" else "开启共享")
@@ -230,8 +235,8 @@ class MainActivity : Activity() {
 
     private fun openScheduleSettings() {
         if (Build.VERSION.SDK_INT < 31) return
-        AlertDialog.Builder(this).setTitle("定时定位与夜间暂停")
-            .setMessage("请在系统中允许“闹钟和提醒”，用于共享期间定时唤醒采样，以及每天按手机本地时间 22:00 暂停定位、08:00 恢复。未允许时可能延迟采样和切换；即使允许，深度省电仍可能延长更新间隔。夜间收到的位置仍会丢弃且不上报。此授权不会开启声音闹钟，也不会自动开启共享。")
+        AlertDialog.Builder(this).setTitle("定时定位与配置时段暂停")
+            .setMessage("请在系统中允许“闹钟和提醒”，用于共享期间定时唤醒采样，以及按手机本地时间和当前设备配置暂停、恢复定位。未允许时可能延迟采样和切换；即使允许，深度省电仍可能延长更新间隔。暂停期间收到的位置仍会丢弃且不上报。此授权不会开启声音闹钟，也不会自动开启共享。")
             .setNegativeButton("暂不设置", null)
             .setPositiveButton("前往设置") { _, _ ->
                 runCatching { startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName"))) }

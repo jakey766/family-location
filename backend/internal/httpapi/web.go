@@ -46,6 +46,7 @@ func serveWebAsset(w http.ResponseWriter, r *http.Request, name string) {
 		"index.html": "text/html; charset=utf-8", "styles.css": "text/css; charset=utf-8",
 		"app.mjs": "text/javascript; charset=utf-8", "state.mjs": "text/javascript; charset=utf-8",
 		"map.mjs": "text/javascript; charset=utf-8", "icon.svg": "image/svg+xml",
+		"management.mjs": "text/javascript; charset=utf-8",
 	}[name]
 	if !ok {
 		http.NotFound(w, r)

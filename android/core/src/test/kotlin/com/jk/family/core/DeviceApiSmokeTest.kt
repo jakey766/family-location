@@ -18,8 +18,12 @@ class DeviceApiSmokeTest {
             val state = SharingState()
             state.started(state.begin(), session)
             val first = state.capture(Fix(30.0, 120.0, 8.0, System.currentTimeMillis() - 2_000, 80))!!
-            assertTrue(api.upload(first))
-            assertFalse(api.upload(first))
+            val accepted = api.uploadResult(first)
+            assertTrue(accepted.accepted)
+            assertEquals(DeviceConfig(), accepted.config)
+            val duplicate = api.uploadResult(first)
+            assertFalse(duplicate.accepted)
+            assertEquals(DeviceConfig(), duplicate.config)
             val second = state.capture(first.fix.copy(capturedAtMillis = first.fix.capturedAtMillis + 1_000, batteryPercent = null))!!
             assertTrue(api.upload(second))
             assertEquals("out_of_order", assertThrows(ApiException::class.java) { api.upload(first) }.code)

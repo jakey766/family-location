@@ -24,6 +24,7 @@ internal class ScheduledPositionSource(
     private var epoch = 0L
     private var collecting = false
     private var interval = MotionPolicy.MOVING_INTERVAL
+    private var highAccuracy = false
     private var startedAt = 0L
     private var lock: PowerManager.WakeLock? = null
     private var onFix: ((Fix) -> Unit)? = null
@@ -34,12 +35,16 @@ internal class ScheduledPositionSource(
         stop()
         this.onFix = onFix
         this.onError = onError
-        interval = MotionPolicy.MOVING_INTERVAL
         active = true
         sample()
     }
 
-    override fun interval(millis: Long) { interval = millis.coerceIn(MotionPolicy.MOVING_INTERVAL, MotionPolicy.STILL_INTERVAL) }
+    override fun interval(millis: Long) {
+        interval = millis.coerceIn(60_000L, 3_600_000L)
+        if (active) timer.schedule(startedAt + interval)
+    }
+
+    override fun accuracy(high: Boolean) { highAccuracy = high }
 
     override fun wake() {
         if (!active) return
@@ -67,6 +72,7 @@ internal class ScheduledPositionSource(
         Log.i("FamilyLocation", "sample_start interval_ms=$interval")
         try {
             source.interval(interval)
+            source.accuracy(highAccuracy)
             source.start({ fix -> finish(token, fix, null) }, { error -> finish(token, null, error) })
         } catch (_: Exception) {
             finish(token, null, "定位暂不可用，等待下一次采样")

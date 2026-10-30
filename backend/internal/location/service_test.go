@@ -29,7 +29,7 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	_, err = db.Exec(`INSERT INTO families VALUES(1,'test',0),(2,'other',0); INSERT INTO users VALUES(1,1,'test','unused',0),(2,2,'other','unused',0); INSERT INTO devices(id,family_id,name,token_hash,created_at) VALUES('device',1,'模拟设备',x'01',0),('other',2,'other',x'02',0)`)
+	_, err = db.Exec(`INSERT INTO families(id,name,created_at,public_id) VALUES(1,'test',0,'test-family'),(2,'other',0,'other-family'); INSERT INTO users VALUES(1,1,'test','unused',0),(2,2,'other','unused',0); INSERT INTO devices(id,family_id,name,token_hash,created_at) VALUES('device',1,'模拟设备',x'01',0),('other',2,'other',x'02',0); INSERT INTO family_admins SELECT family_id,id FROM users; INSERT INTO family_devices SELECT family_id,id FROM devices; INSERT INTO device_configs(device_id) SELECT id FROM devices;`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,10 +134,25 @@ func TestLifecycleOrderingAndSessionIsolation(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+func TestStationarySamplingFreshnessMargin(t *testing.T) {
+	f := setup(t)
+	id := f.start(t)
+	captured := f.now
+	// A delayed receipt keeps the lease alive past the capture freshness boundary.
+	f.now = captured.Add(30 * time.Second)
+	mustUpload(t, f, point(id, 1, captured), true)
+	for _, age := range []time.Duration{5 * time.Minute, 330 * time.Second, 7*time.Minute - time.Millisecond, 7 * time.Minute} {
+		f.now = captured.Add(age)
+		if got, want := list(t, f)[0].Stale, age >= 7*time.Minute; got != want {
+			t.Errorf("capture age %s: stale = %v, want %v", age, got, want)
+		}
+	}
+}
+
 func TestLeaseFreshnessCleanupAndReplay(t *testing.T) {
 	f := setup(t)
 	id := f.start(t)
-	p := point(id, 1, f.now.Add(-5*time.Minute))
+	p := point(id, 1, f.now.Add(-7*time.Minute))
 	mustUpload(t, f, p, true)
 	if !list(t, f)[0].Stale {
 		t.Fatal("delayed upload appears fresh")
@@ -158,7 +173,7 @@ func TestLeaseFreshnessCleanupAndReplay(t *testing.T) {
 		t.Fatal(n, e)
 	}
 	mustUpload(t, f, p, false)
-	if got := list(t, f); len(got) != 1 || got[0].ReceivedAt != p.CapturedAt.Add(5*time.Minute) {
+	if got := list(t, f); len(got) != 1 || got[0].ReceivedAt != p.CapturedAt.Add(7*time.Minute) {
 		t.Fatal("retry changed retained location")
 	}
 	p.Sequence = 2
@@ -167,7 +182,7 @@ func TestLeaseFreshnessCleanupAndReplay(t *testing.T) {
 	if list(t, f)[0].Stale {
 		t.Fatal("new capture stale")
 	}
-	f.now = f.now.Add(5 * time.Minute)
+	f.now = f.now.Add(7 * time.Minute)
 	if !list(t, f)[0].Stale {
 		t.Fatal("freshness boundary")
 	}

@@ -1,6 +1,6 @@
 # 位置共享 API（第三步）
 
-已实现 Go + SQLite 位置后端、第四步网页和第五步安卓客户端代码；安卓三台真机尚未验收。启动服务使用 `make run`；已有管理员不需要再次初始化，旧 v1/v2 数据库自动升级至 v3。认证、登录和设备配对见 [AUTH_API.md](AUTH_API.md)，技术边界见[第三步设计](superpowers/specs/2026-10-15-location-design.md)。
+已实现 Go + SQLite 位置后端、第四步网页和第五步安卓客户端代码；安卓三台真机尚未验收。启动服务使用 `make run`；已有管理员不需要再次初始化，旧 v1/v2/v3 数据库自动升级至 v4。认证、登录和设备配对见 [AUTH_API.md](AUTH_API.md)，技术边界见[第三步设计](superpowers/specs/2026-10-15-location-design.md)。
 
 ## 不影响正式数据的验证
 
@@ -21,7 +21,7 @@ make location-demo
 | --- | --- | --- |
 | `POST /api/v1/device/sharing/start` | `{}` | 201，`sharing_session_id` 字符串 |
 | `POST /api/v1/device/sharing/stop` | `sharing_session_id` | 204，无响应体 |
-| `PUT /api/v1/device/location` | 下表全部必填字段 | 200，`{"accepted":true}` 或 `{"accepted":false}` |
+| `PUT /api/v1/device/location` | 下表全部必填字段 | 200，`accepted` 布尔值及完整 `config`（见下文） |
 
 每次 start 生成新会话、删除之前位置、重置序号。客户端必须串行处理启停，使用最后一次成功开始的会话；start 响应丢失时重新开始会替换会话。停止携带当前 ID，重复停止已关闭的会话成功；新会话开启后，旧停止返回 409，不会关闭新会话。
 
@@ -43,16 +43,37 @@ make location-demo
 
 同一会话低序号返回 409；相同序号返回 `accepted:false`，忽略请求内容且不改变坐标、接收时间和租约。该重复处理仍要求请求字段合法、采集时间在允许窗口内、会话有效。更高序号要求原始定位时间不早于上一接受点。断网仅保留最新一个点，网络恢复时发送它；不补传轨迹。超时仍保留最后点和序号水位；重试旧点不能修改最后点或刷新新鲜度。
 
+## 上报响应下发设备配置
+
+成功上传与合法重复上传都返回同一设备的最新完整配置，例如：
+
+```json
+{
+  "accepted": true,
+  "config": {
+    "version": 1,
+    "moving_interval_seconds": 120,
+    "stationary_interval_seconds": 300,
+    "moving_high_accuracy": false,
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "08:00"
+  }
+}
+```
+
+重复点只把 `accepted` 改为 false，仍返回当前配置；序号/时间校验及不续期规则不变。配置根据设备 Bearer 身份读取，上传请求体不增加家庭或配置字段。字段约束、暂停边界和客户端生效时机见 [DEVICE_CONFIG.md](DEVICE_CONFIG.md)。旧 Android 客户端可忽略新响应字段，只有更新客户端后才能实际应用配置。
+
 ## 管理员查询
 
-`GET /api/v1/locations` 使用登录后的管理员 Cookie；设备 Bearer 不具有查询权限。响应含 `server_time` 和 `locations` 数组，空结果为 `[]`。
+`GET /api/v1/locations?family=<家庭标识>` 使用登录后的管理员 Cookie；设备 Bearer 不具有查询权限。响应含 `server_time` 和 `locations` 数组，空结果为 `[]`。
 
-每项包含 `device_id`、`name`、`sequence`、`latitude`、`longitude`、`coordinate_system`、`accuracy_m`、`battery_percent`、`captured_at`、`received_at`、`lease_expires_at`、`stale`。不返回设备凭证或共享会话 ID。只能查询登录管理员所属家庭，客户端不传 family_id。
+每项包含 `device_id`、`name`、`sequence`、`latitude`、`longitude`、`coordinate_system`、`accuracy_m`、`battery_percent`、`captured_at`、`received_at`、`lease_expires_at`、`stale`、`stale_after_seconds`。不返回设备凭证或共享会话 ID。只能查询登录管理员有权限的指定家庭成员；未传 `family` 时兼容原默认家庭，显式无效标识返回 404。家庭关系和管理接口见 [AUTH_API.md](AUTH_API.md)。
 
 - `captured_at`：定位发生时间，页面应据此显示“多久前定位”。
 - `received_at`：后端接受新点时间，只描述同步时间。
-- `stale`：原始定位时间距服务端已达到 5 分钟，或上报间隔达到 7 分钟。即使刚恢复网络上传，旧点也会标记为陈旧。
-- `lease_expires_at`：接受新序号后 7 分钟；2026-10-19 起仅表示上报中断阈值，到期仍返回最后位置并标为陈旧。保留字段名兼容旧协议。
+- `stale_after_seconds`：每台设备当前配置对应的阈值，`max(420, stationary_interval_seconds + 120)`。默认 7 分钟。
+- `stale`：原始定位时间距服务端达到上述阈值，或最后有效上报已达到该阈值。刚恢复网络上传也不会让旧点变新鲜。
+- `lease_expires_at`：查询时按最后有效 `received_at` 加当前配置阈值计算；配置修改后无需等待新位置即可反映新阈值，重复上报仍不刷新 `received_at`。默认接受新序号后 7 分钟，到期保留最后位置并标陈旧。字段名兼容旧协议。
 - 服务启动和之后每分钟仅清理已停止共享或撤销设备的残留位置；活跃会话的最后位置不因超时删除。旧版已经删除的位置无法恢复，需要手机再次上报。
 
 网页后续应轮询查询并依据 `server_time` 计算时间差；不能把上一次响应无限保持为正在共享，也不能用 `received_at` 替代定位新鲜度。
@@ -72,6 +93,6 @@ make location-demo
 
 ## 实际验收边界
 
-本阶段自动测试和模拟工具验证服务端逻辑；未验证 iPhone Safari、高德地图、安卓 SDK、三台目标真机、耗电、30/180 秒实际定位间隔或公网端到端链路。第四步网页已使用上述隔离模拟服务和 DOM 自动化验证，真实高德与 iPhone Safari 尚未验收，后续安卓阶段再接入真机。
+本阶段自动测试和模拟工具验证服务端逻辑；未验证 iPhone Safari、高德地图、安卓 SDK、三台目标真机、耗电、设备配置对应的实际定位间隔（默认 120/300 秒）或公网端到端链路。第四步网页已使用上述隔离模拟服务和 DOM 自动化验证，真实高德完整交互与 iPhone Safari 尚未验收，后续需用新版 Android 分别进行三台真机验收。
 
 汪汪

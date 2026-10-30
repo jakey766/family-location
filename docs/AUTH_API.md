@@ -1,6 +1,6 @@
 # 第二步运行与认证 API
 
-本文描述已实现的管理员认证与设备配对。最新交付状态见 [PROGRESS.md](PROGRESS.md)，设计依据见[第二步设计](superpowers/specs/2026-10-12-auth-pairing-design.md)。第四步已提供[登录及管理网页](WEB_UI.md)，安卓 App 尚未实现。
+本文描述已实现的管理员认证与设备配对。最新交付状态见 [PROGRESS.md](PROGRESS.md)，设计依据见[第二步设计](superpowers/specs/2026-10-12-auth-pairing-design.md)。H5 已提供[登录及家庭管理网页](WEB_UI.md)，Android 使用见 [ANDROID.md](ANDROID.md)。
 
 ## 启动
 
@@ -14,11 +14,11 @@ make run
 
 `make init-admin` 会依次提示用户名、家庭名称及两次密码，密码输入不回显。用户名允许 3–64 位 ASCII 字母、数字、点、下划线和连字符，统一转小写；密码 12–128 字节（中文字符占多个字节），家庭名称 1–80 字符。没有默认账户、默认密码或公开注册接口。
 
-每个新用户名创建一个独立家庭。已有用户名会报错，不会覆盖原账户或重置密码；以后重启只需 `make run`，无需重复初始化。管理员初始化和服务须使用相同的 `FAMILY_DB_PATH`。
+每个新用户名创建一个独立的默认家庭；登录后可在 H5 创建和管理更多家庭。已有用户名会报错，不会覆盖原账户或重置密码；以后重启只需 `make run`，无需重复初始化。管理员初始化和服务须使用相同的 `FAMILY_DB_PATH`。
 
 也可运行 `./bin/family-location init-admin --username admin --family 我的家庭`（用户名与家庭名称自行替换），密码仍由终端隐藏输入；自动化提供 `--password-stdin` 从标准输入读一行，并必须同时提供 username/family。不要把密码放命令参数、脚本源码、shell 历史或文档中。
 
-启动会自动将原 SQLite v1/v2 事务化升级至 v3，保留原有数据；迁移失败不会记录为已成功。升级后的库不能由仅支持 v1/v2 的旧二进制打开。健康接口仍为 `/healthz`、`/readyz`。
+启动会自动将原 SQLite v1/v2/v3 事务化升级至 v4，保留原有数据；迁移失败不会记录为已成功。升级后的库不能由仅支持 v1/v2/v3 的旧二进制打开。健康接口仍为 `/healthz`、`/readyz`。
 
 ## 登录及请求约定
 
@@ -33,20 +33,40 @@ make run
 | POST `/api/v1/auth/login` | JSON 字段 `username`、`password`；同源 Origin | 200；Set-Cookie；响应字段 `user`、`csrf_token`、`expires_at` |
 | GET `/api/v1/auth/me` | 会话 Cookie | 200；当前 user、csrf_token、expires_at，可用于页面刷新后恢复 CSRF token |
 | POST `/api/v1/auth/logout` | 会话 Cookie、Origin、X-CSRF-Token；不需要请求体 | 204；清除 Cookie 并撤销当前会话 |
-| POST `/api/v1/pairing-codes` | 管理员会话、Origin、CSRF；JSON 空对象 | 201；`pairing_id`、`code`、`expires_at` |
+| POST `/api/v1/pairing-codes?family=<家庭标识>` | 管理员会话、Origin、CSRF；JSON 空对象 | 201；`pairing_id`、`code`、`expires_at` |
 | POST `/api/v1/devices/pair` | JSON 字段 `pairing_id`、`code`、`name`；无管理员 Cookie 依赖 | 201；`device`、`device_token`，凭证仅在本次响应返回 |
-| GET `/api/v1/devices` | 管理员会话 | 200；`devices` 数组，仅本家庭，包含已撤销设备 |
-| DELETE `/api/v1/devices/{id}` | 管理员会话、Origin、CSRF；无请求体 | 204；撤销本家庭设备，重复撤销仍为 204 |
+| GET `/api/v1/devices?family=<家庭标识>` | 管理员会话 | 200；`devices` 数组，仅当前家庭成员，包含已撤销设备 |
+| DELETE `/api/v1/devices/{id}` | 管理员会话、Origin、CSRF；无请求体 | 204；撤销该管理员管理的设备，所有家庭位置均清除，重复撤销仍为 204 |
 | GET `/api/v1/device/me` | `Authorization: Bearer` 携带设备凭证 | 200；`device`；撤销或凭证错误时 401 |
 
 `user` 包含 `id`、`family_id`、`username`。`device` 包含 `id`、`family_id`、`name`、`created_at`、`revoked_at`；未撤销时 revoked_at 为 null。返回时间为 RFC3339。列表和身份查询不返回密码摘要或设备凭证。
+
+## 多家庭与设备管理（schema v4）
+
+家庭公开标识随机生成，仅用于选择家庭，不是访问凭证。H5 链接为 `/?family=<public_id>`，仍需登录有权限的管理员。一个管理员可管理多个家庭，设备可加入同管理员管理的多个家庭；本版不提供跨账号共享或免登录查看。
+
+设备列表、位置列表和生成配对码支持 `family` 查询参数。不传参数兼容原默认家庭；显式空值、重复参数、格式错误、不存在或无权限的标识返回 404，不回退默认家庭。配对成功将新设备加入指定家庭；加入其他家庭无需再次配对。
+
+| 方法与路径 | 请求与权限 | 成功结果 |
+| --- | --- | --- |
+| GET `/api/v1/families` | 管理员会话 | 200；`{"families":[{"id":1,"public_id":"示例标识","name":"我的家庭"}]}` |
+| POST `/api/v1/families` | 管理员会话、Origin、CSRF；`{"name":"父母家"}`，名称 1–80 字符 | 201；新家庭的 `id`、`public_id`、`name` |
+| GET `/api/v1/devices?scope=owned` | 管理员会话；不能同时传 family | 200；该管理员管理的全部设备，每台额外含 `families` 数组（家庭对象），没有成员关系时为 `[]` |
+| PUT `/api/v1/families/{public_id}/devices/{device_id}` | 管理员会话、Origin、CSRF；`{}` | 204；把自己管理的有效设备加入该家庭，重复加入幂等 |
+| DELETE `/api/v1/families/{public_id}/devices/{device_id}` | 管理员会话、Origin、CSRF | 204；仅移出当前家庭，重复移出幂等；不停止设备、清除位置或影响其他家庭 |
+| GET `/api/v1/devices/{device_id}/config` | 管理员会话，设备管理权限 | 200；[完整配置对象](DEVICE_CONFIG.md) |
+| PUT `/api/v1/devices/{device_id}/config` | 管理员会话、Origin、CSRF，五个配置字段 | 200；服务端递增版本后的完整配置对象 |
+
+`device.family_id` 保留为配对时的管理归属家庭，不再代表设备全部成员关系。设备移出所有家庭后仍可从 `scope=owned` 管理、配置、重新加入或撤销；跨账号添加、配置、撤销返回 404。撤销是全局操作：设备凭证立即失效、所有家庭均无位置，需重新配对。
+
+旧库迁移保留原家庭、账号、配对、设备凭证、共享会话及最后位置；家庭与设备原来的关系初始化为成员关系。设备配置默认值见配置文档。
 
 ## 配对、权限与失败处理
 
 - 必须同时提交 `pairing_id` 和 8 位数字 `code`。2026-10-19 起新生成的标识为 12 位随机大写字母/数字（排除 0/O、1/I），旧标识仍兼容，不更改设备凭证长度。code 是字符串，保留前导零；name 为 1–80 字符。网页已封装包含服务器地址的完整 JSON；安卓支持复制后自动填写及主动粘贴，暂不提供扫码 UI。
 - 配对信息 10 分钟有效，最多 5 次错误码尝试；每个家庭新建配对信息会使旧信息失效。成功消费一次后无法重用，并发请求也只能一次成功。
 - 设备凭证只返回一次，由客户端安全保存。若成功响应丢失，需要管理员重新生成配对信息；不会通过查询接口找回凭证。
-- 设备凭证不能登录管理员接口，管理员会话也不能当成设备凭证。其他家庭的设备不能列出或撤销，撤销访问按 404 处理。
+- 设备凭证不能登录管理员接口，管理员会话也不能当成设备凭证。无管理权限的家庭和设备不能列出或撤销，访问按 404 处理。
 - 设备配对不代表开启位置共享；位置接口已在第三步实现，见 [LOCATION_API.md](LOCATION_API.md)。
 - 登录按用户名及直连 IP 分别限流：首次请求起 10 分钟内各最多 5 次，成功与失败均计入；配对按 IP 最多 20 次／10 分钟。限流状态写入 SQLite，重启不清零。429 带 `Retry-After: 600`，哈希并发繁忙也返回 429；客户端应退避。
 - 超过 5 次失败的配对记录不会自动恢复，须重新生成；过期会话重新登录。账号错误与密码错误使用相同响应。
@@ -77,7 +97,7 @@ make smoke
 make auth-smoke
 ```
 
-`auth-smoke` 在项目内临时库中生成临时测试账户、会话及设备，只在内存中使用测试凭证，不打印或写入文档；验证 v1→v3、初始化、登录/CSRF、一次性配对、权限隔离、重启、设备撤销和注销，结束回收子进程及临时文件，不操作正式数据库。该脚本在 macOS/Linux 运行，还会使用 PTY 检查密码输入处被 SIGINT/SIGTERM 中断后终端属性正常恢复。
+`auth-smoke` 在项目内临时库中生成临时测试账户、会话及设备，只在内存中使用测试凭证，不打印或写入文档；验证 v1→v4、初始化、登录/CSRF、一次性配对、权限隔离、重启、设备撤销和注销，结束回收子进程及临时文件，不操作正式数据库。该脚本在 macOS/Linux 运行，还会使用 PTY 检查密码输入处被 SIGINT/SIGTERM 中断后终端属性正常恢复。
 
 位置后端、网页和安卓客户端代码已实现，实际验证边界见 [PROGRESS.md](PROGRESS.md)；安卓配置和真机验收见 [ANDROID.md](ANDROID.md)。
 

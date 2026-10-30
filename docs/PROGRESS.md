@@ -1,8 +1,48 @@
 # 项目进度
 
-更新日期：2026-10-20。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)、[第四步计划](superpowers/plans/2026-10-15-web-plan.md)及[第五步计划](superpowers/plans/2026-10-18-android-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
+更新日期：2026-10-30。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)、[第四步计划](superpowers/plans/2026-10-15-web-plan.md)及[第五步计划](superpowers/plans/2026-10-18-android-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
 
 ## 当前状态
+
+2026-10-30（多家庭与设备配置，0.6.0 已构建，未部署/安装）：已完成用户确认的升级代码。SQLite 事务迁移至 schema v4，保留已有账号、设备凭证、配对、共享会话及最后位置；新增家庭标识、管理员多家庭授权和设备多家庭成员关系。H5 可创建/选择家庭、复制含标识链接、复用已有设备、单家庭移出和全局撤销；仍需有权限的管理员登录。移出不会停止设备或影响其他家庭，无家庭成员关系的设备仍可在“所有受管理设备”管理。
+
+设备配置页面支持移动/静止间隔（1～60 整分钟且静止不短于移动）、移动高精度、每天单个暂停时间段（同日/跨午夜、分钟精度、不同起止，按设备本地时间）。默认 120/300 秒、高精度关闭、22:00 至次日 08:00。上报 true/false 成功响应均带当前版本配置；Android 校验、按配对身份保存并动态更新采样/精度/暂停，保留停止不恢复、离线最新点与原始时间规则。收到配置使当前时刻进入暂停时立即停止本地定位；已暂停设备需先按旧时段恢复、成功上报后获取新配置。新鲜度按每设备 `max(420 秒, 静止间隔+120 秒)` 判断，最后位置仍保留。
+
+本轮验证：`make test vet test-race smoke auth-smoke location-smoke web-smoke android-test android-smoke` 全部通过；10 项 Node 测试及真实隔离后端 DOM 联调通过，Android core 29 项通过、普通运行 1 项 smoke 跳过，app 148 项通过，独立 android-smoke 实际执行并通过。最终复核有 Gradle UP-TO-DATE 项，不将其声称为全部重跑；核心新增失败用例曾实际运行红绿验证。覆盖 v3→v4 保留/失败回滚、跨账号拒绝、设备跨家庭、配置默认/校验/下发、动态陈旧阈值、家庭切换迟到响应、配置保存中断网保留草稿、地图初始化/家庭初始化恢复和暂停/时区/DST/持久化失败重试。最终整套日志在项目内 `.cache/tmp/multi-family-final-checks.log`，最后 H5 手动刷新回归在 `.cache/tmp/web-manual-init-green.log`。
+
+审阅修复：非法 family 参数解析不得回退默认家庭；新增静态 JS 模块加入服务白名单；隐私告知改为按配置暂停；Android 本地保存失败后保持运行配置并提示未保存，后续成功上报重试相同版本落盘；H5 补齐断网草稿保留及初始化重试。后端、Android、H5 分别进行需求与质量检查，跨端字段/升级兼容完成独立复核。Node 仍有 VM Modules 实验提示；Android 构建仍可能显示既有 deprecated 提示，不声称构建零警告。
+
+发布包：`make android-release` 和 `sh scripts/android.sh :app:lintRelease` 成功，Release lint `No issues found.`。`bin/family-location-0.6.0-release.apk` 为 1,541,259 字节，与 `android/app/build/outputs/apk/release/app-release.apk` 逐字节一致；包名 `com.jk.family`，versionName 0.6.0 / versionCode 9，不可调试，v2 签名有效且证书与 0.5.7 一致。SHA-256：`cc22160f609d0e982bee6128053e0f463f35f9994393ce1dd9c01bfc8a0c7a9a`。旧包保留，未安装、未远程部署、未执行 git add/commit；代码与缓存/测试临时数据均在项目内。
+
+启动和下一步：本地 `make run`；服务器按 [DEPLOYMENT.md](DEPLOYMENT.md) 先备份旧库再构建重启，刷新 H5 后覆盖安装 0.6.0（保留配对）。配置页面使用见 [WEB_UI.md](WEB_UI.md)，字段和生效延迟见 [DEVICE_CONFIG.md](DEVICE_CONFIG.md)。分别验收三台 Android 的配置更新、暂停边界、锁屏/重启和耗电，并验证 iPhone Safari 新页面；本地自动检查与签名构建不代表这些真机验收完成。以下进行中及旧版记录均为历史。
+
+2026-10-30（升级实施与审阅中）：用户已批准完整设计。schema v4 多家庭成员关系、旧库迁移、设备配置/下发和 H5 管理页面已实现；Go 测试/vet/race、认证与位置 smoke、H5 真后端 DOM 联调已有通过记录。Android 配置解析、持久化、动态调度及暂停已实现，首轮 core 29/app 144 测试及 android-smoke/release/lint 通过；审阅发现的隐私文案与配置保存失败重试正在完成最终复核和重构建。H5 正在补网络中断恢复边界的回归检查。本条是进行中状态，最终产物与检查以之后的交付记录为准，尚未部署、安装或真机验收。使用既有 `make run` 启动，勿把本地测试当服务器更新。
+
+2026-10-30（补充可配置暂停时间，未实施）：用户追加“不采集、不上报时间段”，默认沿用每天 22:00 至次日 08:00。已同步需求与升级设计，纳入按设备配置和上报响应下发；草案明确设备本地时间、单个每日时段、跨午夜及边界语义，并说明已暂停设备需先按旧配置恢复、上报后才能收到新配置。已核对现有 `QuietHours` 和 `SharingSchedule` 的固定时间实现，本次只修改文档，未修改 Android 代码或构建 APK。下一步仍为审阅整份升级设计后实施；现有启动方法 `make run` 不变。
+
+2026-10-30（升级需求与设计草案，未实施）：用户要求多家庭标识、设备可加入多个家庭、H5 按链接家庭展示，以及配置页面和上报响应下发配置；进一步确认按设备独立配置。默认移动 120 秒、静止 300 秒、移动高精度关闭。已阅读现有存储、鉴权、H5、位置协议及 Android 采样实现，并记录[设计草案](superpowers/specs/2026-10-30-multi-family-device-settings-design.md)。草案建议保留登录、管理员管理多个家庭并在其管理范围添加设备，权限方案与参数范围待审阅。仅更新需求与设计文档，未修改功能代码、未运行功能测试、未构建或安装 APK，未执行 git add/commit。现有启动仍为 `make run`；下一步确认设计后分阶段实施迁移、后端/H5 和 Android，再执行实际验证及发布包构建。
+
+2026-10-21（vivo 省电切换后强停，重开已恢复一次上传）：用户反馈开启省电、数分钟后退出，网页停留“定位于 1 小时前”。11:38 ADB 故障快照确认实际安装为 0.5.6 / code7（2026-10-20 18:18:24 更新），并非最新已构建的 0.5.7；应用 `stopped=true`，进程及 SharingService 均不存在。当前标准低电量模式为关闭，不能据此推断先前未启用厂商省电模式。
+
+事件日志记录 10:25:52 启动 `com.bbk.SuperPowerSave` 服务与页面，10:25:55.280 杀死家庭位置 PID 13258，原因 `stop com.jk.family @2463`，随后 Activity 被标记 `force-stop`；同一调用者还发送清理最近任务及 `KILL_ALL_APPS_DONE` 广播。实时 `ps` 与 `/proc/2463/cmdline` 均确认 PID 2463 为 `com.vivo.upslide`，与昨日 `com.vivo.abe` 调用者不同。本次直接机制为系统组件强停，时间线与超级省电启动吻合；尚未验证任何白名单能避免该模式清理。11:02:55 厂商电源日志记录模式恢复为 0，11:38 仍停用，说明退出省电未自动恢复此应用。
+
+现场保存后，11:38:44 左右通过 ADB 启动 MainActivity，未点击开启、未改配对或系统设置。11:38:45 原有共享自动建立，进程 PID 27042、前台 SharingService 恢复，`stopped=false`；真实 SDK 返回定位，上传成功分支记录“共享中 · 最近定位 11:38:43”。11:39:45 又完成一次上传，原始定位时间 11:39:43，11:39:53 收到 SAMPLE 唤醒广播。已确认连续两次 App→服务器上传成功，尚未核验用户网页刷新、断电锁屏持续上报或再次切换省电。本轮 `dumpsys alarm` 返回空输出，因此不将其作为定时任务是否存在的证据。筛选证据位于被忽略的 `logs/adb-vivo-20261021/`，不保存凭证或坐标。
+
+处理与下一步：取消省电后打开家庭位置一次是本轮已验证的恢复入口；需要持续共享时避免启用此次会清理应用的超级省电模式，保留既有后台高耗电/自启动许可，但不将这些设置视为强停豁免保证。默认广播排除 stopped 应用，不能把新增省电广播监听或普通重试说成可修复本次强停。本轮只更新诊断文档，未改 Android 代码、未构建或安装 APK、未执行 git add/commit；0.5.7 仍需另行覆盖安装以使用 2/5 分钟目标，升级本身不解决系统强停。继续观察网页新时间并按 [ANDROID.md](ANDROID.md) 做单项锁屏复测。
+
+2026-10-21（0.5.7 已构建，未安装）：用户要求每次修改 Android 代码后均构建 APK，此约定已写入 `AGENTS.md` 和 `PROJECT_CONTEXT.md`。本次补交付移动 120 秒／静止 300 秒及对应页面文案的正式包，versionName 0.5.7 / versionCode 8。`make android-release`、`sh scripts/android.sh :app:lintRelease` 均成功，Release lint 无问题；编译仍有既有 deprecated 提示。本轮仅递增版本并补构建，功能测试结果沿用下方同日评审修复记录。
+
+产物：`bin/family-location-0.5.7-release.apk`，1,512,679 字节，与 `android/app/build/outputs/apk/release/app-release.apk` 逐字节一致；SHA-256：`34b47c233bae45eaa79bd4ed8f91dcb4988a46ea585972a736003acee3982e98`。APK v2 签名校验通过、证书与 0.5.6 一致，包名 `com.jk.family`、版本信息正确且不可调试。旧交付包保留；没有安装、远程部署或真机验收，不执行 git add/commit。
+
+下一步：覆盖安装 0.5.7 保留配对；后端/网页的 7 分钟陈旧阈值仍需服务器更新、构建并重启，随后刷新网页（本地启动 `make run`，服务器见 [DEPLOYMENT.md](DEPLOYMENT.md)）。分别验证实际 2/5 分钟采样、锁屏与耗电。本条更新下文同日早先“未构建新 APK”的状态。
+
+2026-10-21（采样周期评审修复，未构建新 APK）：已将后端 `StaleAfter`、网页默认陈旧阈值同步为 420 秒，为 300 秒静止采样留出 120 秒余量；web-config 自动返回 420 秒。仍按原始采集时间判断，7 分钟上报租约独立生效，同点重传不续期，最后位置继续保留。App 页面更新为移动 2 分钟／静止 5 分钟；需求、整体/Android/位置/省电/后台设计、API 和使用说明已同步，旧版本历史记录保留。
+
+验证：新增 Go 和 Node 用例先在旧实现失败（300 秒被判陈旧），修改后覆盖 300 秒、330 秒、419.999 秒新鲜及 420 秒陈旧，延迟上传仍陈旧、租约到期仍保留。HTTP 配置断言和陈旧样本按新阈值同步。`make test vet web-smoke location-smoke` 通过，含 9 项 Node 测试及真实隔离后端/DOM 联调；`make android-test` 成功，app 130 项实际重跑通过，core 24 项通过及 1 项 smoke 跳过沿用 Gradle UP-TO-DATE 结果。Android 仍有既有 deprecated 编译提示、Node 有 VM Modules 实验提示。没有真机验收、远程部署或新 APK 构建，不执行 git add/commit。
+
+启动与下一步：本地后端 `make run`；服务器按 [DEPLOYMENT.md](DEPLOYMENT.md) 更新源码、构建并重启，刷新网页后新阈值生效。安卓需后续构建、签名并安装新版本才会使用 2/5 分钟及新文案；已有 0.5.6 APK 仍是 60/180 秒。此次包含后端/网页改动，不能沿用旧版“仅安卓、无需更新后端”的部署结论。随后分别真机验证实际间隔、锁屏与耗电。
+
+2026-10-21（采样周期调整，未构建新包）：按用户要求，白天采样目标由移动 60 秒/静止 180 秒改为移动 120 秒/静止 300 秒（2 分钟/5 分钟）。仅修改 `MotionPolicy` 两个常量并同步更新单测，`ScheduledPositionSourceTest` 中一处硬编码的唤醒时刻改为基于 `MOVING_INTERVAL`；其余调度、退避、夜间暂停逻辑不变。Android 全部测试通过（core 24、app 130）。尚未构建新 APK，0.5.6 及之前产物仍是 60/180 秒；需求文档已同步。
 
 2026-10-20（休眠采样代码修正，0.5.6 已交付，尚未安装）：用户确认改代码后，已将 SDK 连续定位改为系统闹钟唤醒的逐次定位，补齐定位窗口和网络/主线程交接短锁；等待期间不持应用常驻锁，保留低功耗模式、失败退避及 22:00–08:00 暂停。154 项 Android 测试通过（core 24、app 130），另 1 项独立后端 smoke 按配置跳过；正式构建、Release lint 与同证书 v2 签名校验通过。产物 `bin/family-location-0.5.6-release.apk`，versionCode 7。ADB 覆盖安装因 vivo 安装器要求登录 vivo 账号未完成，两次返回 `-200`；用户选择先交付 APK、稍后自行安装，已停止安装尝试和实时日志采集，复查手机仍是 0.5.5/code6。本次代码和自动验证完成，不代表新包已通过真机锁屏验收；详细记录见下文。
 
@@ -252,7 +292,7 @@ cd /Users/jiangkunpeng/dev/jk_space/family-location
 make run
 ```
 
-先停止仍在运行的旧服务；已有管理员只需 `make run`，启动会自动迁移至 schema v3。首次使用才运行 `make init-admin`，已有用户名初始化会报错且不覆盖账户。`make init-admin` 交互询问用户名、家庭和密码，密码不回显。浏览器打开 `http://127.0.0.1:8080/` 即可登录。网页和高德配置见 [WEB_UI.md](WEB_UI.md)，认证见 [AUTH_API.md](AUTH_API.md)，共享接口见 [LOCATION_API.md](LOCATION_API.md)。
+先停止仍在运行的旧服务；已有管理员只需 `make run`，启动会自动迁移至 schema v4。首次使用才运行 `make init-admin`，已有用户名初始化会报错且不覆盖账户。`make init-admin` 交互询问用户名、家庭和密码，密码不回显。浏览器打开 `http://127.0.0.1:8080/` 即可登录。网页和高德配置见 [WEB_UI.md](WEB_UI.md)，认证见 [AUTH_API.md](AUTH_API.md)，共享接口见 [LOCATION_API.md](LOCATION_API.md)。
 
 在另一终端检查：
 
@@ -268,10 +308,14 @@ curl -i http://127.0.0.1:8080/readyz
 - 位置后端已完成自动验证；已收到用户 vivo 实际使用和锁屏反馈，尚无完整真机链路日志和手动验收记录。
 - Kotlin App、高德适配、共享启停、后台策略和 0.5.5 省电/夜间暂停代码已实现，正式签名 APK 已构建，已有 Android Key/发布签名已配置；真实 SDK/硬件/权限/后台/耗电及夜间边界尚未验收。
 - 网页上述功能代码已实现；2026-10-18 用户反馈空地图可显示、加入设备位置后异常，已修正 Marker 方法名错误待复测。真实高德完整交互、iPhone Safari 窄屏/触控/后台恢复尚未验收。
-- vivo X9（Android 7.1.2）已收到安装/打开后的界面异常反馈，0.5.1 兼容处理待用户复测；Mi 11 Lite、Redmi Note 13 Pro（均 Android 13）尚未进行本项目真机验证。三台的 1 分钟／3 分钟效果、耗电和后台稳定性均尚无实测结论。
+- vivo X9（Android 7.1.2）已收到安装/打开后的界面异常反馈，0.5.1 兼容处理待用户复测；Mi 11 Lite、Redmi Note 13 Pro（均 Android 13）尚未进行本项目真机验证。三台的当前配置目标（默认 2 分钟／5 分钟）、耗电和后台稳定性均尚无完整实测结论。
 - 公网服务器部署、HTTP/IP 端到端联调未执行；HTTPS 按已确认范围留待后续。
 
 ## 下一步
+
+2026-10-30：优先按 [DEPLOYMENT.md](DEPLOYMENT.md) 备份并更新后端到 schema v4，刷新 H5；覆盖安装本轮 `bin/family-location-0.6.0-release.apk`，保持既有配对。创建第二个家庭并复用设备，确认各链接只显示对应成员；修改设备间隔、高精度及暂停时段，在下一次成功上报后核对 App 有效配置，分别验证同日/跨夜暂停、锁屏、重启和主动停止。以下旧版本安装安排保留为历史，不再作为当前交付版本。
+
+2026-10-21 优先按本页最新记录更新后端/网页，并覆盖安装已构建的 `bin/family-location-0.5.7-release.apk`。下述 0.5.6 及更早安装事项是历史遗留验收，不包含本轮 2/5 分钟和陈旧阈值调整。
 
 优先由用户覆盖安装 `bin/family-location-0.5.6-release.apk`（本轮 vivo 账号验证未完成，手机仍为 0.5.5），按 [ANDROID.md](ANDROID.md) 的定时采样与夜间暂停流程验收。无需为本次安卓变更更新服务器；此前尚未完成的短标识后端更新、网页和公网联调继续按下述原有事项推进。
 
@@ -283,7 +327,7 @@ curl -i http://127.0.0.1:8080/readyz
 | --- | --- | --- |
 | 第三步：位置后端 | 共享启停、最新位置上传/查询、精度/电量、原始定位时间、乱序保护、租约及清理；提供项目内测试数据工具 | 每设备仅一条位置、旧数据不覆盖新数据、停止后不再显示、跨家庭拒绝；无需高德 Key 即可验证接口 |
 | 第四步：iPhone 网页 | 登录/注销、生成配对信息、设备列表与撤销、高德多人地图、精度/电量/更新时间/过期状态 | Safari 可实际操作；使用独立测试库或明确标记的测试设备和模拟位置，验证地图及接口，不写入虚构家人位置 |
-| 第五步：安卓 App | Kotlin + 高德定位 SDK、配对、主动开启/停止共享、60/180 秒策略、断网仅保留最新点、签名 APK | 三台目标设备分别验收；真实手机位置显示在已完成的网页，vivo 调试不替代 Android 13 验证 |
+| 第五步：安卓 App | Kotlin + 高德定位 SDK、配对、主动开启/停止共享、设备可配置间隔/精度/暂停时段、断网仅保留最新点、签名 APK | 三台目标设备分别验收；真实手机位置显示在已完成的网页，vivo 调试不替代 Android 13 验证 |
 | 第六步：部署联调 | 公网 HTTP/IP 部署、进程守护、数据权限、完整使用说明 | 安卓到 iPhone 的真实链路、锁屏/断网/重启、停止与撤销；HTTPS 仍留后续 |
 
 本次代码交付到第五步安卓；第四步浏览器/真实地图/iPhone 和第五步三台安卓真机验收仍未完成，第六步尚未执行。构建产物、JVM/DOM 测试与模拟工具不替代真机和公网验收。

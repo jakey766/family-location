@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.jk.family.core.QuietHours
+import com.jk.family.core.DeviceConfig
 import java.time.ZoneId
 
 /** Local day/night boundaries are independent of monotonic sample/retry alarms. */
@@ -16,10 +17,12 @@ internal object SharingSchedule {
     fun canScheduleExactly(context: Context): Boolean = Build.VERSION.SDK_INT < 31 ||
         context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
 
-    fun schedule(context: Context, nowMillis: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()) {
+    fun schedule(context: Context, nowMillis: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault(),
+        config: DeviceConfig = AppRuntime.controller?.takeIf { it.active }?.config ?: CredentialStore(context).readConfig(),
+    ) {
         if (!CredentialStore(context).sharingRequested) { cancel(context); return }
         val alarm = context.getSystemService(AlarmManager::class.java)
-        val next = QuietHours.nextBoundary(nowMillis, zone)
+        val next = QuietHours.nextBoundary(nowMillis, zone, config)
         val pending = pending(context)
         if (canScheduleExactly(context)) {
             try {

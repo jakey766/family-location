@@ -46,7 +46,7 @@ func TestLocationHTTPContract(t *testing.T) {
 	if e = json.Unmarshal(w.Body.Bytes(), &sharing); e != nil || sharing.SharingSessionID == "" {
 		t.Fatal(e)
 	}
-	payload := map[string]any{"sharing_session_id": sharing.SharingSessionID, "sequence": 1, "latitude": 31.234567, "longitude": 121.456789, "coordinate_system": "GCJ-02", "accuracy_m": 12.5, "battery_percent": nil, "captured_at": time.Now().Add(-6 * time.Minute).UTC().Format(time.RFC3339Nano)}
+	payload := map[string]any{"sharing_session_id": sharing.SharingSessionID, "sequence": 1, "latitude": 31.234567, "longitude": 121.456789, "coordinate_system": "GCJ-02", "accuracy_m": 12.5, "battery_percent": nil, "captured_at": time.Now().Add(-8 * time.Minute).UTC().Format(time.RFC3339Nano)}
 	encode := func(v any) string {
 		b, e := json.Marshal(v)
 		if e != nil {

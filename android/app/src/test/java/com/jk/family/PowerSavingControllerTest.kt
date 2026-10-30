@@ -51,7 +51,7 @@ class PowerSavingControllerTest {
         assertTrue(r.c.paused)
         assertEquals(0, r.starts)
         assertEquals(0, r.sourceStarts)
-        assertTrue(r.message.contains("夜间暂停"))
+        assertTrue(r.message.contains("暂停时段"))
         assertNull(r.c.retryDelayMillis())
         r.quiet = false; r.c.updateSchedule(); r.settle()
         assertEquals(1, r.starts)

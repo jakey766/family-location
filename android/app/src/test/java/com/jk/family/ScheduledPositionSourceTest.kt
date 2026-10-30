@@ -23,6 +23,7 @@ class ScheduledPositionSourceTest {
         var starts = 0
         var stops = 0
         var selectedInterval = 0L
+        var high = false
         lateinit var fix: (Fix) -> Unit
         lateinit var error: (String) -> Unit
         override fun start(onFix: (Fix) -> Unit, onError: (String) -> Unit) {
@@ -30,6 +31,7 @@ class ScheduledPositionSourceTest {
         }
         override fun stop() { stops++ }
         override fun interval(millis: Long) { selectedInterval = millis }
+        override fun accuracy(high: Boolean) { this.high = high }
     }
     private val app = RuntimeEnvironment.getApplication()
     private val raw = FakeSource()
@@ -76,6 +78,26 @@ class ScheduledPositionSourceTest {
         source.stop()
     }
 
+    @Test fun remoteIntervalRearmsWaitingSampleAndAccuracyAppliesToNextAcquisition() {
+        start()
+        raw.fix(point)
+        source.interval(600000L)
+        source.accuracy(true)
+        assertEquals(601000L, alarms.single().triggerAtTime)
+        now = 601000L; source.wake()
+        assertEquals(600000L, raw.selectedInterval)
+        assertTrue(raw.high)
+        source.interval(60000L)
+        source.accuracy(false)
+        assertEquals("ordinary update lets the current sample finish", 1, raw.stops)
+        raw.fix(point.copy(capturedAtMillis = 2000L))
+        assertEquals(661000L, alarms.single().triggerAtTime)
+        now = 661000L; source.wake()
+        assertFalse(raw.high)
+        assertEquals(60000L, raw.selectedInterval)
+        source.stop()
+    }
+
     @Test fun timeoutReleasesLockAndLateResultCannotBeUploaded() {
         start()
         val late = raw.fix
@@ -86,7 +108,7 @@ class ScheduledPositionSourceTest {
         late(point)
         assertTrue(fixes.isEmpty())
         assertEquals(1, errors.size)
-        now = 61_000
+        now = MotionPolicy.MOVING_INTERVAL + 1_000
         source.wake()
         assertEquals(2, raw.starts)
         late(point)

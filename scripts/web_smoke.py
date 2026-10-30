@@ -23,7 +23,7 @@ def main():
             for index, name in enumerate(('模拟设备-A', '模拟设备-B')):
                 _, token = pair(base, admin, name, sensitive)
                 sharing = start(base, token, sensitive)
-                payload = point(sharing, 1, age_minutes=index * 6, offset=index * .002)
+                payload = point(sharing, 1, age_minutes=index * 8, offset=index * .002)
                 payload['battery_percent'] = 80 if index == 0 else None
                 upload(base, token, payload)
                 sensitive.extend((payload['latitude'], payload['longitude']))

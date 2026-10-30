@@ -108,7 +108,11 @@ func (s *Service) CreateAdmin(ctx context.Context, username, password, family st
 	if exists > 0 {
 		return Admin{}, ErrConflict
 	}
-	result, err := tx.ExecContext(ctx, "INSERT INTO families(name,created_at) VALUES (?,?)", family, s.now().Unix())
+	publicID, err := randomToken()
+	if err != nil {
+		return Admin{}, err
+	}
+	result, err := tx.ExecContext(ctx, "INSERT INTO families(name,created_at,public_id) VALUES (?,?,?)", family, s.now().Unix(), publicID)
 	if err != nil {
 		return Admin{}, fmt.Errorf("create family: %w", err)
 	}
@@ -123,6 +127,9 @@ func (s *Service) CreateAdmin(ctx context.Context, username, password, family st
 	id, err := result.LastInsertId()
 	if err != nil {
 		return Admin{}, fmt.Errorf("admin ID: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO family_admins(family_id,user_id) VALUES (?,?)", familyID, id); err != nil {
+		return Admin{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Admin{}, fmt.Errorf("commit admin: %w", err)

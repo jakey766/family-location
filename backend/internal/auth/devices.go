@@ -13,7 +13,7 @@ import (
 
 func (s *Service) authorizeAdmin(ctx context.Context, a Admin) error {
 	var found int
-	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM users WHERE id=? AND family_id=?", a.ID, a.FamilyID).Scan(&found)
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM family_admins WHERE user_id=? AND family_id=?", a.ID, a.FamilyID).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthorized
 	}
@@ -137,6 +137,12 @@ func (s *Service) Pair(ctx context.Context, pairingID, code, name, ip string) (P
 	if _, err := tx.ExecContext(ctx, "INSERT INTO devices(id,family_id,name,token_hash,created_at) VALUES (?,?,?,?,?)", id, familyID, name, digest(token), now); err != nil {
 		return PairedDevice{}, fmt.Errorf("create device: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO family_devices(family_id,device_id) VALUES (?,?)", familyID, id); err != nil {
+		return PairedDevice{}, err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO device_configs(device_id) VALUES (?)", id); err != nil {
+		return PairedDevice{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return PairedDevice{}, fmt.Errorf("commit device: %w", err)
 	}
@@ -146,7 +152,7 @@ func (s *Service) Devices(ctx context.Context, a Admin) ([]Device, error) {
 	if err := s.authorizeAdmin(ctx, a); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT id,family_id,name,created_at,revoked_at FROM devices WHERE family_id=? ORDER BY created_at,id", a.FamilyID)
+	rows, err := s.db.QueryContext(ctx, "SELECT d.id,d.family_id,d.name,d.created_at,d.revoked_at FROM devices d JOIN family_devices fd ON fd.device_id=d.id WHERE fd.family_id=? ORDER BY d.created_at,d.id", a.FamilyID)
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
@@ -173,7 +179,7 @@ func (s *Service) RevokeDevice(ctx context.Context, a Admin, id string) error {
 		return fmt.Errorf("begin device revocation: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "UPDATE devices SET revoked_at=COALESCE(revoked_at,?),sharing_session_id=NULL,last_sequence=0,last_captured_at=NULL WHERE id=? AND family_id=?", s.now().Unix(), id, a.FamilyID)
+	result, err := tx.ExecContext(ctx, "UPDATE devices SET revoked_at=COALESCE(revoked_at,?),sharing_session_id=NULL,last_sequence=0,last_captured_at=NULL WHERE id=? AND family_id IN (SELECT family_id FROM family_admins WHERE user_id=?)", s.now().Unix(), id, a.ID)
 	if err != nil {
 		return fmt.Errorf("revoke device: %w", err)
 	}

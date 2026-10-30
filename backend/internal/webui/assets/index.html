@@ -87,6 +87,13 @@
               <span aria-hidden="true">↻</span> 刷新
             </button>
           </div>
+          <section class="family-toolbar" aria-label="当前家庭">
+            <label for="family-select">当前家庭</label>
+            <select id="family-select" aria-label="选择家庭"></select>
+            <button id="copy-family" type="button" class="secondary">复制家庭链接</button>
+            <input id="family-link" readonly aria-label="当前家庭链接" />
+            <p id="family-link-status" class="footnote" role="status">查看链接仍需登录有权限的账号。</p>
+          </section>
           <nav class="tabs" aria-label="页面切换">
             <button id="tab-locations" aria-current="page" type="button">
               家人位置</button
@@ -146,6 +153,13 @@
           </section>
           <section id="devices-view" hidden aria-label="设备管理">
             <div class="management-layout">
+              <div class="management-sidebar">
+              <form id="create-family-form" class="pair-card">
+                <h2>创建家庭</h2>
+                <label for="family-name">家庭名称</label>
+                <input id="family-name" required maxlength="80" placeholder="例如：我的家、父母家" />
+                <button id="create-family" type="submit" class="primary">创建家庭</button>
+              </form>
               <section class="pair-card">
                 <span class="section-number">BRING FAMILY CLOSER</span>
                 <h2>添加一台家庭设备</h2>
@@ -180,9 +194,10 @@
                   </p>
                 </div>
               </section>
+              </div>
               <section class="devices-card">
                 <div class="section-heading">
-                  <h2>已配对设备</h2>
+                  <h2>当前家庭成员</h2>
                   <span class="muted">由你管理</span>
                 </div>
                 <div id="devices-list"></div>
@@ -190,10 +205,37 @@
                   还没有配对设备，从左侧生成配对信息开始。
                 </p>
                 <p class="footnote">
-                  撤销后，设备立即失去共享权限，需要重新配对才能使用。
+                  移出只影响当前家庭；撤销会从所有家庭清除位置，并使设备凭证失效。
                 </p>
               </section>
             </div>
+            <section class="devices-card owned-card" aria-label="所有受管理设备">
+              <h2>所有受管理设备</h2>
+              <p class="footnote">可将已配对设备加入当前家庭。同一设备在不同家庭共用一份配置。</p>
+              <div id="owned-devices-list"></div>
+            </section>
+          </section>
+          <section id="settings-view" hidden aria-label="设备配置">
+            <form id="device-config-form" class="settings-card">
+              <button id="back-devices" type="button" class="text-button">← 返回设备管理</button>
+              <h2 id="config-device-name">设备配置</h2>
+              <p id="config-device-families" class="footnote"></p>
+              <p class="footnote">修改会影响这台设备在所有家庭中的上报策略。</p>
+              <fieldset id="config-fields" disabled>
+                <label for="moving-minutes">移动上报间隔（分钟）</label>
+                <input id="moving-minutes" type="number" min="1" max="60" step="1" required />
+                <label for="stationary-minutes">静止上报间隔（分钟）</label>
+                <input id="stationary-minutes" type="number" min="1" max="60" step="1" required />
+                <label class="check-label" for="moving-high-accuracy"><input id="moving-high-accuracy" type="checkbox" />移动时使用高精度</label>
+                <label for="quiet-start">不采集、不上报：开始时间</label>
+                <input id="quiet-start" type="time" required />
+                <label for="quiet-end">不采集、不上报：结束时间</label>
+                <input id="quiet-end" type="time" required />
+                <p class="footnote">按设备本地时间每天执行，支持跨午夜；开始与结束不能相同。静止间隔不得短于移动间隔。</p>
+                <button id="save-device-config" class="primary" type="submit">保存设备配置</button>
+              </fieldset>
+              <p id="config-status" class="message" role="status"></p>
+            </form>
           </section>
         </section>
       </main>

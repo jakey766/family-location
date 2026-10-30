@@ -18,6 +18,7 @@ type authAPI struct{ service *auth.Service }
 
 func registerAuth(mux *http.ServeMux, db *sql.DB) {
 	a := &authAPI{service: auth.New(db)}
+	a.registerFamilies(mux)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
 	mux.HandleFunc("GET /api/v1/auth/me", a.me)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.logout)
@@ -77,7 +78,11 @@ func (a *authAPI) createPairing(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &struct{}{}) {
 		return
 	}
-	pairing, err := a.service.CreatePairing(r.Context(), session.User)
+	selected, ok := a.selectedAdmin(w, r, session.User)
+	if !ok {
+		return
+	}
+	pairing, err := a.service.CreatePairing(r.Context(), selected)
 	if err != nil {
 		authError(w, r, err)
 		return
@@ -107,7 +112,21 @@ func (a *authAPI) devices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	devices, err := a.service.Devices(r.Context(), session.User)
+	selected, ok := a.selectedAdmin(w, r, session.User)
+	if !ok {
+		return
+	}
+	var devices any
+	var err error
+	if r.URL.Query().Has("scope") {
+		if r.URL.Query().Get("scope") != "owned" || r.URL.Query().Has("family") {
+			authError(w, r, auth.ErrInvalidInput)
+			return
+		}
+		devices, err = a.service.OwnedDevices(r.Context(), session.User)
+	} else {
+		devices, err = a.service.Devices(r.Context(), selected)
+	}
 	if err != nil {
 		authError(w, r, err)
 		return

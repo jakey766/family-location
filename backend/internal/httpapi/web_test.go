@@ -80,7 +80,7 @@ func TestWebConfigurationRequiresAdminAndNeverExposesSecurityCode(t *testing.T) 
 		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 			t.Fatal(err)
 		}
-		if got.Map.Enabled != (cfg.AMapJSKey != "") || got.Map.Key != cfg.AMapJSKey || got.Map.ServiceHost != "/_AMapService" || got.Poll != 10 || got.Stale != 300 {
+		if got.Map.Enabled != (cfg.AMapJSKey != "") || got.Map.Key != cfg.AMapJSKey || got.Map.ServiceHost != "/_AMapService" || got.Poll != 10 || got.Stale != 420 {
 			t.Fatalf("bad config: %s", w.Body.String())
 		}
 		if strings.Contains(w.Body.String(), "private-secret") || strings.Contains(w.Body.String(), "jscode") {
@@ -208,5 +208,14 @@ func TestAMapProxyTimeoutAndCancellation(t *testing.T) {
 	c.h.ServeHTTP(w, r)
 	if w.Code == 200 {
 		t.Fatal("canceled request succeeded")
+	}
+}
+
+func TestManagementAssetIsServed(t *testing.T) {
+	h := New(testDB(t))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/assets/management.mjs", nil))
+	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("management module status=%d type=%s", w.Code, w.Header().Get("Content-Type"))
 	}
 }

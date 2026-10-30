@@ -17,14 +17,24 @@ import org.robolectric.annotation.Config
 class AmapSourceTest {
     private val application = RuntimeEnvironment.getApplication()
 
-    @Test fun precisePermissionSwitchesBetweenMovingAndStillModes() {
+    @Test fun precisePermissionDefaultsToLowPowerWithoutRemoteOptIn() {
         shadowOf(application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
         val source = AmapSource(application, Notification())
-        assertOptions(source, MotionPolicy.MOVING_INTERVAL, AMapLocationClientOption.AMapLocationMode.Hight_Accuracy)
+        assertOptions(source, MotionPolicy.MOVING_INTERVAL, AMapLocationClientOption.AMapLocationMode.Battery_Saving)
         source.interval(MotionPolicy.STILL_INTERVAL)
         assertOptions(source, MotionPolicy.STILL_INTERVAL, AMapLocationClientOption.AMapLocationMode.Battery_Saving)
         source.interval(MotionPolicy.MOVING_INTERVAL)
-        assertOptions(source, MotionPolicy.MOVING_INTERVAL, AMapLocationClientOption.AMapLocationMode.Hight_Accuracy)
+        assertOptions(source, MotionPolicy.MOVING_INTERVAL, AMapLocationClientOption.AMapLocationMode.Battery_Saving)
+    }
+
+    @Test fun explicitAccuracyIsIndependentOfInterval() {
+        shadowOf(application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        val source = AmapSource(application, Notification())
+        source.interval(60000L)
+        source.accuracy(true)
+        assertOptions(source, 60000L, AMapLocationClientOption.AMapLocationMode.Hight_Accuracy)
+        source.accuracy(false)
+        assertOptions(source, 60000L, AMapLocationClientOption.AMapLocationMode.Battery_Saving)
     }
 
     @Test fun approximatePermissionKeepsCompatibleModeWhenStill() {

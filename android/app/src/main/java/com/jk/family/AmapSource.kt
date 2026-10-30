@@ -15,10 +15,13 @@ import com.jk.family.core.Fix
 import com.jk.family.core.MotionPolicy
 import com.jk.family.core.QuietHours
 
-internal class AmapSource(private val context: Context, private val notification: Notification) : PositionSource {
+internal class AmapSource(private val context: Context, private val notification: Notification,
+    private val quietNow: () -> Boolean = { QuietHours.isQuiet(config = CredentialStore(context).readConfig()) },
+) : PositionSource {
     private var client: AMapLocationClient? = null
     private val handler = Handler(Looper.getMainLooper())
     private var generation = 0
+    private var highAccuracy = false
     private var currentInterval = MotionPolicy.MOVING_INTERVAL
 
     override fun start(onFix: (Fix) -> Unit, onError: (String) -> Unit) {
@@ -31,10 +34,10 @@ internal class AmapSource(private val context: Context, private val notification
         client = created
         created.setLocationOption(options())
         created.setLocationListener { location ->
-            if (QuietHours.isQuiet()) {
+            if (quietNow()) {
                 handler.post {
                     if (generation != epoch || client == null) return@post
-                    onError("夜间暂停定位与上报，08:00 自动恢复")
+                    onError("已进入设备配置的暂停时段，结束后自动恢复")
                 }
                 return@setLocationListener
             }
@@ -60,8 +63,14 @@ internal class AmapSource(private val context: Context, private val notification
         client?.setLocationOption(options())
     }
 
+    override fun accuracy(high: Boolean) {
+        if (highAccuracy == high) return
+        highAccuracy = high
+        client?.setLocationOption(options())
+    }
+
     internal fun options() = AMapLocationClientOption().apply {
-        locationMode = if (currentInterval == MotionPolicy.STILL_INTERVAL &&
+        locationMode = if (!highAccuracy &&
             context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             AMapLocationClientOption.AMapLocationMode.Battery_Saving
         } else {
