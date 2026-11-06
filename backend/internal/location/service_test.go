@@ -29,7 +29,7 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	_, err = db.Exec(`INSERT INTO families(id,name,created_at,public_id) VALUES(1,'test',0,'test-family'),(2,'other',0,'other-family'); INSERT INTO users VALUES(1,1,'test','unused',0),(2,2,'other','unused',0); INSERT INTO devices(id,family_id,name,token_hash,created_at) VALUES('device',1,'模拟设备',x'01',0),('other',2,'other',x'02',0); INSERT INTO family_admins SELECT family_id,id FROM users; INSERT INTO family_devices SELECT family_id,id FROM devices; INSERT INTO device_configs(device_id) SELECT id FROM devices;`)
+	_, err = db.Exec(`INSERT INTO families(id,name,created_at,public_id) VALUES(1,'test',0,'test-family'),(2,'other',0,'other-family'); INSERT INTO users VALUES(1,1,'test','unused',0),(2,2,'other','unused',0); INSERT INTO devices(id,family_id,name,token_hash,created_at) VALUES('device',1,'模拟设备',x'01',0),('other',2,'other',x'02',0); INSERT INTO family_admins SELECT family_id,id FROM users; INSERT INTO device_admins SELECT d.id,fa.user_id FROM devices d JOIN family_admins fa ON fa.family_id=d.family_id; INSERT INTO family_devices SELECT family_id,id FROM devices; INSERT INTO device_configs(device_id) SELECT id FROM devices;`)
 	if err != nil {
 		t.Fatal(err)
 	}

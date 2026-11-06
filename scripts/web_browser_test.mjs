@@ -29,7 +29,7 @@ for (const engine of process.env.WEB_TEST_BROWSER === "chromium"
     const page = await context.newPage();
     const failures = [];
     page.on("pageerror", (error) => failures.push(error.name));
-    await page.goto(base);
+    await page.goto(base + "/admin");
     await page.locator("#login-view").waitFor({ state: "visible" });
     await page.locator("#login-username").fill(username);
     await page.locator("#login-password").fill(password);
@@ -39,10 +39,7 @@ for (const engine of process.env.WEB_TEST_BROWSER === "chromium"
       () => document.querySelectorAll(".person-card").length === 2,
     );
     assert.match(await page.locator("#map-title").textContent(), /未配置/);
-    assert.match(
-      await page.locator("#family-list").textContent(),
-      /最后位置/,
-    );
+    assert.match(await page.locator("#family-list").textContent(), /最后位置/);
     assert.match(await page.locator("#family-list").textContent(), /电量未知/);
     assert.equal(
       await page.evaluate(
@@ -59,7 +56,52 @@ for (const engine of process.env.WEB_TEST_BROWSER === "chromium"
     await page.waitForFunction(
       () => document.querySelectorAll(".person-card").length === 2,
     );
+    assert.equal(await page.locator("#generate-pairing").isDisabled(), true);
+    const familyKey = await page
+      .locator("#family-select option")
+      .evaluateAll((options) => options.find((o) => o.value).value);
+    await page.locator("#family-select").selectOption(familyKey);
+    await page.waitForFunction(
+      () => !document.querySelector("#refresh").disabled,
+    );
     await page.locator("#tab-devices").click();
+    await page.locator("#regenerate-passcode").click();
+    await page.locator("#passcode-result").waitFor({ state: "visible" });
+    const passcode = await page.locator("#current-passcode").inputValue();
+    assert.match(passcode, /^[0-9]{7}$/);
+    const familyURL = await page.locator("#family-link").inputValue();
+    assert.equal(familyURL, `${base}/family?key=${familyKey}`);
+    const viewerContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    const viewer = await viewerContext.newPage();
+    viewer.on("pageerror", (error) => failures.push(error.name));
+    await viewer.goto(familyURL);
+    await viewer.locator("#family-auth").waitFor({ state: "visible" });
+    await viewer.locator("#family-passcode").fill(passcode);
+    await viewer.locator("#family-auth-submit").click();
+    await viewer.locator("#family-view").waitFor({ state: "visible" });
+    assert.equal(await viewer.locator(".person-card").count(), 2);
+    assert.equal(await viewer.locator("#family-select").count(), 0);
+    assert.equal(
+      await viewer.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      true,
+      "viewer mobile overflow",
+    );
+    await viewer.screenshot({
+      path: `.cache/web-screenshots/${engine}-family.png`,
+      fullPage: true,
+    });
+    await viewer.reload();
+    await viewer.locator("#family-view").waitFor({ state: "visible" });
+    await viewer.locator("#family-logout").click();
+    await viewer.locator("#family-auth").waitFor({ state: "visible" });
+    assert.equal(await viewer.locator("#family-list").textContent(), "");
+    await viewerContext.close();
     await page.locator("#generate-pairing").click();
     await page.locator("#pairing-result").waitFor({ state: "visible" });
     const code = await page.locator("#pairing-code").textContent();
@@ -85,7 +127,7 @@ for (const engine of process.env.WEB_TEST_BROWSER === "chromium"
     );
     assert.deepEqual(failures, [], "browser errors");
     console.log(
-      `PASS: ${engine} mobile login/session, list/stale, map fallback, pairing, confirmation, logout`,
+      `PASS: ${engine} mobile login/session, list/stale, map fallback, pairing, confirmation, logout, independent read-only family viewer`,
     );
     await context.close();
   } finally {

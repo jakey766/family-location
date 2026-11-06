@@ -57,12 +57,19 @@ const mapView = createMapView(
   selectPerson,
 );
 const management = createManagement({
-  request, element, generation: () => generation,
+  request,
+  element,
+  generation: () => generation,
   active: () => Boolean(state.session && !state.logoutPending && !suspended),
   onSelect: () => changeFamily(),
-  onChanged: (text) => { changeFamily(); message(text); },
+  onChanged: (text) => {
+    changeFamily();
+    message(text);
+  },
   onView: switchView,
-  onError: (error) => { if (!handleError(error)) message(errorMessage(error)); },
+  onError: (error) => {
+    if (!handleError(error)) message(errorMessage(error));
+  },
   onRevoke: openConfirm,
 });
 function changeFamily() {
@@ -75,7 +82,7 @@ function changeFamily() {
   renderDevices();
   if (state.view === "settings") switchView("devices");
   message();
-  $("sync-status").textContent = "正在获取当前家庭…";
+  $("sync-status").textContent = "正在获取当前范围…";
   $("refresh").disabled = false;
   refresh();
   if (!state.config) loadMapConfig();
@@ -87,7 +94,7 @@ function message(text = "") {
   $("app-message").textContent = text;
   $("app-message").hidden = !text;
 }
-function invalidate({preserveEditor = false} = {}) {
+function invalidate({ preserveEditor = false } = {}) {
   generation++;
   if (!preserveEditor) management.clearEditor();
   clearTimeout(pollTimer);
@@ -195,10 +202,18 @@ async function enterSession(session) {
   const current = generation;
   $("refresh").disabled = true;
   try {
-    if (!await management.load(session.user.family_id) || current !== generation) return;
+    if (
+      !(await management.load(session.user.family_id)) ||
+      current !== generation
+    )
+      return;
   } catch (error) {
     if (current === generation && !handleError(error)) {
-      message(error.status === 404 ? "此家庭不存在或当前账号无权访问，请选择有权限的家庭。" : errorMessage(error));
+      message(
+        error.status === 404
+          ? "此家庭不存在或当前账号无权访问，请选择有权限的家庭。"
+          : errorMessage(error),
+      );
       $("refresh").disabled = false;
     }
     return;
@@ -222,11 +237,18 @@ async function loadMapConfig() {
 }
 function scheduleRefresh() {
   clearTimeout(pollTimer);
-  if (state.session && management.familyId && !state.logoutPending && !suspended)
+  if (state.session && management.ready && !state.logoutPending && !suspended)
     pollTimer = setTimeout(refresh, (state.config?.poll_seconds || 10) * 1000);
 }
 async function refresh() {
-  if (!state.session || !management.familyId || state.logoutPending || suspended || refreshing) return;
+  if (
+    !state.session ||
+    !management.ready ||
+    state.logoutPending ||
+    suspended ||
+    refreshing
+  )
+    return;
   refreshing = true;
   clearTimeout(pollTimer);
   $("refresh").disabled = true;
@@ -246,7 +268,8 @@ async function refresh() {
     if (
       !Number.isFinite(serverTime) ||
       !Array.isArray(snapshot.locations) ||
-      !Array.isArray(devices.devices) || !Array.isArray(owned.devices)
+      !Array.isArray(devices.devices) ||
+      !Array.isArray(owned.devices)
     )
       throw new Error("invalid response");
     state.clock = { serverTime, receivedAt };
@@ -262,10 +285,17 @@ async function refresh() {
   } catch (error) {
     if (current !== generation) return;
     if (!handleError(error)) {
-      if (error.status === 404) { clearLocations(); state.devices=[]; state.ownedDevices=[]; renderDevices(); }
+      if (error.status === 404) {
+        clearLocations();
+        state.devices = [];
+        state.ownedDevices = [];
+        renderDevices();
+      }
       state.connectionFailed = true;
       $("sync-status").textContent = "连接中断 · 显示最后位置";
-      message("连接中断，保留最后获取的位置，共享状态尚未确认。请检查网络后刷新。");
+      message(
+        "连接中断，保留最后获取的位置，共享状态尚未确认。请检查网络后刷新。",
+      );
     }
   } finally {
     if (current === generation) {
@@ -439,13 +469,25 @@ function renderDevices() {
       const actions = element("div", "device-actions");
       actions.append(button);
       const config = element("button", "text-button config-device", "配置");
-      config.type="button";
+      config.type = "button";
       config.addEventListener("click", () => management.configure(device));
-      const remove = element("button", "text-button remove-member", "移出当前家庭");
-      remove.type="button";
-      remove.addEventListener("click", () => management.membership(device,false));
-      actions.append(config, remove);
+      const remove = element(
+        "button",
+        "text-button remove-member",
+        "移出当前家庭",
+      );
+      remove.type = "button";
+      remove.addEventListener("click", () =>
+        management.membership(device, false),
+      );
+      actions.append(config);
+      if (management.familyId) actions.append(remove);
       row.append(actions);
+    } else {
+      const purge = element("button", "text-button purge-device", "彻底删除");
+      purge.type = "button";
+      purge.addEventListener("click", () => openConfirm(device, purge, true));
+      row.append(purge);
     }
     fragment.append(row);
   }
@@ -455,24 +497,34 @@ function renderDevices() {
 }
 function switchView(view) {
   if (state.view !== view) clearPairing();
-  if (state.view === "settings" && view !== "settings") management.clearEditor();
+  if (state.view === "settings" && view !== "settings")
+    management.clearEditor();
   state.view = view;
   $("locations-view").hidden = view !== "locations";
   $("devices-view").hidden = view !== "devices";
   $("settings-view").hidden = view !== "settings";
   $("page-heading").textContent =
-    view === "locations" ? "家人在哪里" : view === "settings" ? "设备上报配置" : "一起，把家人连起来";
+    view === "locations"
+      ? "家人在哪里"
+      : view === "settings"
+        ? "设备上报配置"
+        : "一起，把家人连起来";
   for (const name of ["locations", "devices"]) {
     if (view === name) $(`tab-${name}`).setAttribute("aria-current", "page");
     else $(`tab-${name}`).removeAttribute("aria-current");
   }
   if (view === "locations") requestAnimationFrame(() => mapView.resize());
 }
-function openConfirm(device, button) {
-  pendingRevoke = device;
+function openConfirm(device, button, purge = false) {
+  pendingRevoke = { ...device, purge };
+  $("confirm-title").textContent = purge
+    ? "彻底删除这台设备？"
+    : "撤销这台设备？";
+  $("confirm-revoke").textContent = purge ? "确认彻底删除" : "确认撤销";
   previousFocus = button;
-  $("confirm-description").textContent =
-    `撤销“${device.name}”后，所有家庭将立即停止显示其位置。设备需要重新配对才能继续共享。`;
+  $("confirm-description").textContent = purge
+    ? `彻底删除“${device.name}”后，将清理所有家庭关联与设备配置。旧凭证仍然无效，再次使用需要重新配对。`
+    : `撤销“${device.name}”后，所有家庭将立即停止显示其位置。设备需要重新配对才能继续共享。`;
   $("confirm-overlay").hidden = false;
   $("cancel-revoke").focus();
 }
@@ -503,25 +555,43 @@ $("confirm-revoke").addEventListener("click", async () => {
   $("confirm-revoke").disabled = true;
   $("cancel-revoke").disabled = true;
   try {
-    await request(`/api/v1/devices/${encodeURIComponent(target.id)}`, {
-      method: "DELETE",
-    });
+    await request(
+      `/api/v1/devices/${encodeURIComponent(target.id)}${target.purge ? "/purge" : ""}`,
+      {
+        method: "DELETE",
+      },
+    );
     if (current !== generation) return;
     invalidate();
     state.devices = state.devices.map((d) =>
       d.id === target.id ? { ...d, revoked_at: new Date().toISOString() } : d,
     );
-    state.ownedDevices = state.ownedDevices.map((d) => d.id === target.id ? {...d,revoked_at:new Date().toISOString()} : d);
+    state.ownedDevices = state.ownedDevices.map((d) =>
+      d.id === target.id ? { ...d, revoked_at: new Date().toISOString() } : d,
+    );
+    if (target.purge) {
+      state.devices = state.devices.filter((d) => d.id !== target.id);
+      state.ownedDevices = state.ownedDevices.filter((d) => d.id !== target.id);
+    }
     state.locations = state.locations.filter((p) => p.device_id !== target.id);
     closeConfirm();
     renderLocations();
     renderDevices();
-    message("设备已撤销，位置已移除。");
+    message(
+      target.purge
+        ? "设备已彻底删除，再次使用需要重新配对。"
+        : "设备已撤销，位置已移除。",
+    );
     refresh();
   } catch (error) {
     if (current === generation && !handleError(error)) {
       closeConfirm();
-      message(errorMessage(error));
+      message(
+        error.status === 409
+          ? "设备尚未撤销，请先撤销再彻底删除。"
+          : errorMessage(error),
+      );
+      if (error.status === 409) refresh();
     }
   } finally {
     $("confirm-revoke").disabled = false;
@@ -590,10 +660,13 @@ $("generate-pairing").addEventListener("click", async () => {
   $("generate-pairing").disabled = true;
   message();
   try {
-    const pairing = await request(management.familyPath("/api/v1/pairing-codes"), {
-      method: "POST",
-      body: {},
-    });
+    const pairing = await request(
+      management.familyPath("/api/v1/pairing-codes"),
+      {
+        method: "POST",
+        body: {},
+      },
+    );
     if (
       current !== generation ||
       pairingRequest !== pairingGeneration ||
@@ -618,7 +691,7 @@ $("generate-pairing").addEventListener("click", async () => {
     if (current === generation && !handleError(error))
       message(errorMessage(error));
   } finally {
-    $("generate-pairing").disabled = false;
+    $("generate-pairing").disabled = !management.familyId;
   }
 });
 $("copy-pairing").addEventListener("click", async () => {
@@ -641,7 +714,7 @@ $("empty-add").addEventListener("click", () => switchView("devices"));
 $("fit-map").addEventListener("click", () => mapView.fit());
 $("refresh").addEventListener("click", () => {
   message();
-  if (state.session && !management.familyId && !state.logoutPending) resume();
+  if (state.session && !management.ready && !state.logoutPending) resume();
   else refresh();
 });
 async function restore() {
@@ -679,7 +752,9 @@ function resume() {
   invalidate();
   restore();
 }
-window.addEventListener("popstate", () => { if (state.session) resume(); });
+window.addEventListener("popstate", () => {
+  if (state.session) resume();
+});
 window.addEventListener("pagehide", suspend);
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) resume();
@@ -689,18 +764,22 @@ document.addEventListener("visibilitychange", () =>
 );
 window.addEventListener("offline", () => {
   if (state.session) {
-    invalidate({preserveEditor:true});
+    invalidate({ preserveEditor: true });
     management.offline();
     state.connectionFailed = true;
     $("sync-status").textContent = "网络已断开 · 显示最后位置";
-    message("网络已断开，保留最后获取的位置，共享状态尚未确认。恢复连接后会重新获取。");
+    message(
+      "网络已断开，保留最后获取的位置，共享状态尚未确认。恢复连接后会重新获取。",
+    );
     scheduleRefresh();
   }
 });
 window.addEventListener("online", () => {
   if (state.logoutPending) return;
-  if (state.session && management.familyId && !suspended) { refresh(); if (!state.config) loadMapConfig(); }
-  else resume();
+  if (state.session && management.ready && !suspended) {
+    refresh();
+    if (!state.config) loadMapConfig();
+  } else resume();
 });
 setInterval(tick, 1000);
 restore();

@@ -112,19 +112,19 @@ func (a *authAPI) devices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	selected, ok := a.selectedAdmin(w, r, session.User)
+	owned, ok := ownedScope(w, r)
 	if !ok {
 		return
 	}
 	var devices any
 	var err error
-	if r.URL.Query().Has("scope") {
-		if r.URL.Query().Get("scope") != "owned" || r.URL.Query().Has("family") {
-			authError(w, r, auth.ErrInvalidInput)
-			return
-		}
+	if owned {
 		devices, err = a.service.OwnedDevices(r.Context(), session.User)
 	} else {
+		selected, ok := a.selectedAdmin(w, r, session.User)
+		if !ok {
+			return
+		}
 		devices, err = a.service.Devices(r.Context(), selected)
 	}
 	if err != nil {

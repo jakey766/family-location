@@ -1,6 +1,6 @@
 # 位置共享 API（第三步）
 
-已实现 Go + SQLite 位置后端、第四步网页和第五步安卓客户端代码；安卓三台真机尚未验收。启动服务使用 `make run`；已有管理员不需要再次初始化，旧 v1/v2/v3 数据库自动升级至 v4。认证、登录和设备配对见 [AUTH_API.md](AUTH_API.md)，技术边界见[第三步设计](superpowers/specs/2026-10-15-location-design.md)。
+已实现 Go + SQLite 位置后端、第四步网页和第五步安卓客户端代码；安卓三台真机尚未验收。启动服务使用 `make run`；已有管理员不需要再次初始化，旧 v1/v2/v3/v4 数据库自动升级至 v5。认证、登录和设备配对见 [AUTH_API.md](AUTH_API.md)，技术边界见[第三步设计](superpowers/specs/2026-10-15-location-design.md)。
 
 ## 不影响正式数据的验证
 
@@ -67,7 +67,11 @@ make location-demo
 
 `GET /api/v1/locations?family=<家庭标识>` 使用登录后的管理员 Cookie；设备 Bearer 不具有查询权限。响应含 `server_time` 和 `locations` 数组，空结果为 `[]`。
 
-每项包含 `device_id`、`name`、`sequence`、`latitude`、`longitude`、`coordinate_system`、`accuracy_m`、`battery_percent`、`captured_at`、`received_at`、`lease_expires_at`、`stale`、`stale_after_seconds`。不返回设备凭证或共享会话 ID。只能查询登录管理员有权限的指定家庭成员；未传 `family` 时兼容原默认家庭，显式无效标识返回 404。家庭关系和管理接口见 [AUTH_API.md](AUTH_API.md)。
+每项包含 `device_id`、`name`、`sequence`、`latitude`、`longitude`、`coordinate_system`、`accuracy_m`、`battery_percent`、`captured_at`、`received_at`、`lease_expires_at`、`stale`、`stale_after_seconds`。不返回设备凭证或共享会话 ID。只能查询登录管理员有权限的指定家庭成员；未传 `family` 时兼容仍有效的原默认家庭；默认家庭已删除或显式无效标识返回 404。家庭关系和管理接口见 [AUTH_API.md](AUTH_API.md)。
+
+`GET /api/v1/locations?scope=owned` 返回当前管理员有管理权限的全部设备位置，包括未加入任何家庭的设备；同一设备加入多个家庭时只返回一条位置。`scope` 只能为 `owned` 且只能出现一次，不能与 `family` 同传；非法组合拒绝，不回退到其他范围。删除家庭不会删除设备位置或停止上报，停止共享和撤销规则保持。
+
+家庭查看端使用独立的 `GET /api/v1/family/{key}/snapshot`，需先用该家庭口令取得查看授权；返回 `family`、精简 `devices`、`locations`、`server_time`、`expires_at`。位置字段与管理员查询一致，设备字段仅为 `id`、`name`、`revoked_at`；不返回管理归属或配置。每次按当前成员关系与有效授权查询。管理员 Cookie 不能替代家庭查看授权，家庭凭证也不能访问管理员查询接口，详见 [AUTH_API.md](AUTH_API.md)。
 
 - `captured_at`：定位发生时间，页面应据此显示“多久前定位”。
 - `received_at`：后端接受新点时间，只描述同步时间。

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"family-location/backend/internal/auth"
 	"net/http"
 	"net/url"
@@ -9,6 +10,10 @@ import (
 func (a *authAPI) registerFamilies(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/families", a.families)
 	mux.HandleFunc("POST /api/v1/families", a.createFamily)
+	mux.HandleFunc("PATCH /api/v1/families/{family}", a.updateFamily)
+	mux.HandleFunc("DELETE /api/v1/families/{family}", a.updateFamily)
+	mux.HandleFunc("PUT /api/v1/families/{family}/passcode", a.familyPasscode)
+	mux.HandleFunc("DELETE /api/v1/devices/{id}/purge", a.purgeDevice)
 	mux.HandleFunc("PUT /api/v1/families/{family}/devices/{id}", a.membership)
 	mux.HandleFunc("DELETE /api/v1/families/{family}/devices/{id}", a.membership)
 	mux.HandleFunc("GET /api/v1/devices/{id}/config", a.deviceConfig)
@@ -53,12 +58,24 @@ func (a *authAPI) createFamily(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Name string `json:"name"`
+		Name     string          `json:"name"`
+		Passcode json.RawMessage `json:"passcode"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	result, err := a.service.CreateFamily(r.Context(), session.User, input.Name)
+	passcode := ""
+	if input.Passcode != nil {
+		if err := json.Unmarshal(input.Passcode, &passcode); err != nil {
+			authError(w, r, auth.ErrInvalidInput)
+			return
+		}
+		if len(passcode) != 7 {
+			authError(w, r, auth.ErrInvalidInput)
+			return
+		}
+	}
+	result, err := a.service.CreateFamily(r.Context(), session.User, input.Name, passcode)
 	if err != nil {
 		authError(w, r, err)
 		return
@@ -111,4 +128,22 @@ func (a *authAPI) deviceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, 200, result)
+}
+
+// Parse selection once and reject ambiguous filters before resolving a family.
+func ownedScope(w http.ResponseWriter, r *http.Request) (bool, bool) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		authError(w, r, auth.ErrNotFound)
+		return false, false
+	}
+	values, exists := q["scope"]
+	if !exists {
+		return false, true
+	}
+	if len(values) != 1 || values[0] != "owned" || q.Has("family") {
+		authError(w, r, auth.ErrInvalidInput)
+		return false, false
+	}
+	return true, true
 }

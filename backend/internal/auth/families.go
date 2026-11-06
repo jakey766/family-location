@@ -8,16 +8,18 @@ import (
 )
 
 type Family struct {
-	ID       int64  `json:"id"`
-	PublicID string `json:"public_id"`
-	Name     string `json:"name"`
+	ID          int64  `json:"id"`
+	PublicID    string `json:"public_id"`
+	Name        string `json:"name"`
+	PasscodeSet bool   `json:"passcode_set"`
+	Passcode    string `json:"passcode,omitempty"`
 }
 
 func (s *Service) Families(ctx context.Context, a Admin) ([]Family, error) {
 	if err := s.authorizeAdmin(ctx, a); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT f.id,f.public_id,f.name FROM families f JOIN family_admins fa ON fa.family_id=f.id WHERE fa.user_id=? ORDER BY f.id`, a.ID)
+	rows, err := s.db.QueryContext(ctx, `SELECT f.id,f.public_id,f.name,f.passcode_hash IS NOT NULL FROM families f JOIN family_admins fa ON fa.family_id=f.id WHERE fa.user_id=? AND f.deleted_at IS NULL ORDER BY f.id`, a.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +27,7 @@ func (s *Service) Families(ctx context.Context, a Admin) ([]Family, error) {
 	result := make([]Family, 0)
 	for rows.Next() {
 		var f Family
-		if err := rows.Scan(&f.ID, &f.PublicID, &f.Name); err != nil {
+		if err := rows.Scan(&f.ID, &f.PublicID, &f.Name, &f.PasscodeSet); err != nil {
 			return nil, err
 		}
 		result = append(result, f)
@@ -33,13 +35,28 @@ func (s *Service) Families(ctx context.Context, a Admin) ([]Family, error) {
 	return result, rows.Err()
 }
 
-func (s *Service) CreateFamily(ctx context.Context, a Admin, name string) (Family, error) {
+func (s *Service) CreateFamily(ctx context.Context, a Admin, name string, passcodes ...string) (Family, error) {
 	if err := s.authorizeAdmin(ctx, a); err != nil {
 		return Family{}, err
 	}
 	name = strings.TrimSpace(name)
 	if !validName(name) {
 		return Family{}, ErrInvalidInput
+	}
+	passcode := ""
+	if len(passcodes) > 0 {
+		passcode = passcodes[0]
+	}
+	if passcode == "" {
+		var err error
+		passcode, err = randomPasscode()
+		if err != nil {
+			return Family{}, err
+		}
+	}
+	hash, err := s.hashPasscode(passcode)
+	if err != nil {
+		return Family{}, err
 	}
 	publicID, err := randomToken()
 	if err != nil {
@@ -50,7 +67,7 @@ func (s *Service) CreateFamily(ctx context.Context, a Admin, name string) (Famil
 		return Family{}, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO families(name,created_at,public_id) VALUES(?,?,?)`, name, s.now().Unix(), publicID)
+	res, err := tx.ExecContext(ctx, `INSERT INTO families(name,created_at,public_id,passcode_hash,passcode_version) VALUES(?,?,?,?,1)`, name, s.now().Unix(), publicID, hash)
 	if err != nil {
 		return Family{}, err
 	}
@@ -64,14 +81,14 @@ func (s *Service) CreateFamily(ctx context.Context, a Admin, name string) (Famil
 	if err = tx.Commit(); err != nil {
 		return Family{}, err
 	}
-	return Family{ID: id, PublicID: publicID, Name: name}, nil
+	return Family{ID: id, PublicID: publicID, Name: name, PasscodeSet: true, Passcode: passcode}, nil
 }
 
 // SelectFamily resolves only an explicitly authorized public identifier. It
 // never falls back when an identifier is absent, invalid or inaccessible.
 func (s *Service) SelectFamily(ctx context.Context, a Admin, publicID string) (Admin, error) {
 	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT f.id FROM families f JOIN family_admins fa ON fa.family_id=f.id WHERE f.public_id=? AND fa.user_id=?`, publicID, a.ID).Scan(&id)
+	err := s.db.QueryRowContext(ctx, `SELECT f.id FROM families f JOIN family_admins fa ON fa.family_id=f.id WHERE f.public_id=? AND fa.user_id=? AND f.deleted_at IS NULL`, publicID, a.ID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Admin{}, ErrNotFound
 	}
@@ -96,7 +113,7 @@ func (s *Service) OwnedDevices(ctx context.Context, a Admin) ([]ManagedDevice, e
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.family_id,d.name,d.created_at,d.revoked_at FROM devices d WHERE EXISTS(SELECT 1 FROM family_admins fa WHERE fa.family_id=d.family_id AND fa.user_id=?) ORDER BY d.created_at,d.id`, a.ID)
+	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.family_id,d.name,d.created_at,d.revoked_at FROM devices d WHERE EXISTS(SELECT 1 FROM device_admins fa WHERE fa.device_id=d.id AND fa.user_id=?) ORDER BY d.created_at,d.id`, a.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +134,7 @@ func (s *Service) OwnedDevices(ctx context.Context, a Admin) ([]ManagedDevice, e
 	if err = rows.Close(); err != nil {
 		return nil, err
 	}
-	memberships, err := tx.QueryContext(ctx, `SELECT fd.device_id,f.id,f.public_id,f.name FROM family_devices fd JOIN families f ON f.id=fd.family_id JOIN family_admins fa ON fa.family_id=f.id WHERE fa.user_id=? ORDER BY f.id`, a.ID)
+	memberships, err := tx.QueryContext(ctx, `SELECT fd.device_id,f.id,f.public_id,f.name,f.passcode_hash IS NOT NULL FROM family_devices fd JOIN families f ON f.id=fd.family_id JOIN family_admins fa ON fa.family_id=f.id WHERE fa.user_id=? AND f.deleted_at IS NULL ORDER BY f.id`, a.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +142,7 @@ func (s *Service) OwnedDevices(ctx context.Context, a Admin) ([]ManagedDevice, e
 	for memberships.Next() {
 		var id string
 		var f Family
-		if err = memberships.Scan(&id, &f.ID, &f.PublicID, &f.Name); err != nil {
+		if err = memberships.Scan(&id, &f.ID, &f.PublicID, &f.Name, &f.PasscodeSet); err != nil {
 			return nil, err
 		}
 		if i, ok := index[id]; ok {
@@ -142,7 +159,7 @@ func (s *Service) SetMembership(ctx context.Context, a Admin, publicID, deviceID
 	}
 	defer tx.Rollback()
 	var familyID int64
-	err = tx.QueryRowContext(ctx, `SELECT f.id FROM families f JOIN family_admins fa ON fa.family_id=f.id WHERE f.public_id=? AND fa.user_id=?`, publicID, a.ID).Scan(&familyID)
+	err = tx.QueryRowContext(ctx, `SELECT f.id FROM families f JOIN family_admins fa ON fa.family_id=f.id WHERE f.public_id=? AND fa.user_id=? AND f.deleted_at IS NULL`, publicID, a.ID).Scan(&familyID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -150,7 +167,7 @@ func (s *Service) SetMembership(ctx context.Context, a Admin, publicID, deviceID
 		return err
 	}
 	var found int
-	err = tx.QueryRowContext(ctx, `SELECT 1 FROM devices d JOIN family_admins fa ON fa.family_id=d.family_id WHERE d.id=? AND fa.user_id=? AND d.revoked_at IS NULL`, deviceID, a.ID).Scan(&found)
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM devices d JOIN device_admins fa ON fa.device_id=d.id WHERE d.id=? AND fa.user_id=? AND d.revoked_at IS NULL`, deviceID, a.ID).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}

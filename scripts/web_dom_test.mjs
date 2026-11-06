@@ -19,7 +19,7 @@ virtualConsole.on("jsdomError", (e) => errors.push(e.message));
 const dom = new JSDOM(
   await readFile("backend/internal/webui/assets/index.html", "utf8"),
   {
-    url: base,
+    url: base + "/admin",
     runScripts: "outside-only",
     pretendToBeVisual: true,
     cookieJar: jar,
@@ -122,7 +122,10 @@ try {
     () => doc.querySelectorAll(".person-card").length === 2,
     "two devices",
   );
-  await until(() => $("map-title").textContent.includes("未配置"), "map fallback loaded");
+  await until(
+    () => $("map-title").textContent.includes("未配置"),
+    "map fallback loaded",
+  );
   assert.match($("map-title").textContent, /未配置/);
   assert.match($("family-list").textContent, /最后位置/);
   assert.match($("family-list").textContent, /电量未知/);
@@ -132,7 +135,32 @@ try {
     "PASS: DOM + real HTTP login/CSRF, two devices, original-time stale, optional battery, map fallback",
   );
   assert($("family-select"), "family selector missing");
-  assert(new URL(window.location.href).searchParams.get("family"), "link has no family identifier");
+  assert.equal($("family-select").selectedOptions[0].textContent, "所有设备");
+  assert.equal(
+    $("generate-pairing").disabled,
+    true,
+    "pairing requires selected family",
+  );
+  assert.equal(
+    doc.querySelectorAll(".remove-member").length,
+    0,
+    "all devices has no remove-current-family action",
+  );
+  const initialFamily = [...$("family-select").options].find(
+    (o) => o.value,
+  ).value;
+  $("family-select").value = initialFamily;
+  $("family-select").dispatchEvent(new window.Event("change"));
+  await until(
+    () =>
+      !$("refresh").disabled &&
+      doc.querySelectorAll(".person-card").length === 2,
+    "explicit family selected",
+  );
+  assert.equal(
+    new URL(window.location.href).searchParams.get("family"),
+    initialFamily,
+  );
   click("tab-devices");
   click("generate-pairing");
   await until(() => !$("pairing-result").hidden, "pairing");
@@ -178,7 +206,8 @@ try {
   assert.match($("sync-status").textContent, /最后位置/);
   window.dispatchEvent(new window.Event("online"));
   await until(
-    () => !$("refresh").disabled && $("sync-status").textContent.includes("已同步"),
+    () =>
+      !$("refresh").disabled && $("sync-status").textContent.includes("已同步"),
     "online reload",
   );
   const delayedSnapshot = await (await realRequest("/api/v1/locations")).json();
@@ -211,10 +240,7 @@ try {
   assert.equal(doc.querySelectorAll(".status-badge.stale").length, 2);
   intercept = null;
   click("refresh");
-  await until(
-    () => !$("refresh").disabled,
-    "after slow devices check",
-  );
+  await until(() => !$("refresh").disabled, "after slow devices check");
   const saved = await (await realRequest("/api/v1/locations")).json();
   intercept = async (path, options, next) =>
     path.split("?")[0] === "/api/v1/locations"
@@ -235,11 +261,10 @@ try {
   assert.equal(doc.querySelectorAll(".status-badge.stale").length, 2);
   intercept = null;
   click("refresh");
-  await until(
-    () => !$("refresh").disabled,
-    "after expiry check",
+  await until(() => !$("refresh").disabled, "after expiry check");
+  console.log(
+    "PASS: offline snapshot, server time / stale last positions, recovery",
   );
-  console.log("PASS: offline snapshot, server time / stale last positions, recovery");
   // Malicious names stay literal text. This creates only an isolated test device.
   const session = await (await realRequest("/api/v1/auth/me")).json();
   const freshPair = await (
@@ -278,26 +303,58 @@ try {
   );
   click("tab-locations");
   assert.equal(doc.querySelectorAll(".person-card").length, 1);
+  click("tab-devices");
+  const purge = $("devices-list").querySelector(".purge-device");
+  assert(purge, "revoked device has purge action");
+  purge.click();
+  assert.match($("confirm-description").textContent, /所有家庭关联与设备配置/);
+  click("cancel-revoke");
+  assert.equal($("confirm-overlay").hidden, true);
+  purge.click();
+  click("confirm-revoke");
+  await until(
+    () => $("confirm-overlay").hidden && !$("refresh").disabled,
+    "purge confirmed",
+  );
+  assert.equal($("devices-list").querySelector(".purge-device"), null);
   console.log(
-    "PASS: safe text rendering, revoke cancel/confirm, immediate removal",
+    "PASS: safe text rendering, revoke and purge cancel/confirm, immediate removal",
   );
   // Multi-family membership, settings and response isolation use the real backend.
   const firstFamily = $("family-select").value;
   click("tab-devices");
   $("family-name").value = "测试第二家庭";
-  $("create-family-form").dispatchEvent(new window.Event("submit", {cancelable:true}));
-  await until(() => $("family-select").value !== firstFamily && !$("refresh").disabled, "new family selected");
+  $("create-family-form").dispatchEvent(
+    new window.Event("submit", { cancelable: true }),
+  );
+  await until(
+    () => $("family-select").value !== firstFamily && !$("refresh").disabled,
+    "new family selected",
+  );
   const secondFamily = $("family-select").value;
   assert.equal(doc.querySelectorAll(".person-card").length, 0);
-  assert.equal(new URL(window.location.href).searchParams.get("family"), secondFamily);
+  assert.equal(
+    new URL(window.location.href).searchParams.get("family"),
+    secondFamily,
+  );
   assert.equal($("devices-list").children.length, 0);
-  const sharedPoint = (await (await realRequest(`/api/v1/locations?family=${firstFamily}`)).json()).locations[0];
-  const ownedRow = [...$("owned-devices-list").children].find((r) => r.dataset.deviceId === sharedPoint.device_id);
+  const sharedPoint = (
+    await (await realRequest(`/api/v1/locations?family=${firstFamily}`)).json()
+  ).locations[0];
+  const ownedRow = [...$("owned-devices-list").children].find(
+    (r) => r.dataset.deviceId === sharedPoint.device_id,
+  );
   ownedRow.querySelector(".add-member").click();
-  await until(() => $("devices-list").children.length === 1 && !$("refresh").disabled, "existing device joined second family");
+  await until(
+    () => $("devices-list").children.length === 1 && !$("refresh").disabled,
+    "existing device joined second family",
+  );
   click("tab-locations");
   assert.equal(doc.querySelectorAll(".person-card").length, 1);
-  click("copy-family"); await settle();
+  assert.equal($("family-link").value, `${base}/family?key=${secondFamily}`);
+  assert.match($("current-passcode").value, /^[0-9]{7}$/);
+  click("copy-family");
+  await settle();
   assert.match($("family-link-status").textContent, /长按/);
   click("tab-devices");
   $("devices-list").querySelector(".config-device").click();
@@ -313,107 +370,232 @@ try {
   $("moving-high-accuracy").checked = true;
   $("quiet-start").value = "12:30";
   $("quiet-end").value = "13:45";
-  $("device-config-form").dispatchEvent(new window.Event("submit", {cancelable:true}));
-  await until(() => $("config-status").textContent.includes("已保存"), "config saved");
-  const savedConfig = await (await realRequest(`/api/v1/devices/${sharedPoint.device_id}/config`)).json();
-  assert.deepEqual(savedConfig, {version:2,moving_interval_seconds:180,stationary_interval_seconds:600,moving_high_accuracy:true,quiet_hours_start:"12:30",quiet_hours_end:"13:45"});
-  $("quiet-end").value="12:30";
-  $("device-config-form").dispatchEvent(new window.Event("submit", {cancelable:true}));
+  $("device-config-form").dispatchEvent(
+    new window.Event("submit", { cancelable: true }),
+  );
+  await until(
+    () => $("config-status").textContent.includes("已保存"),
+    "config saved",
+  );
+  const savedConfig = await (
+    await realRequest(`/api/v1/devices/${sharedPoint.device_id}/config`)
+  ).json();
+  assert.deepEqual(savedConfig, {
+    version: 2,
+    moving_interval_seconds: 180,
+    stationary_interval_seconds: 600,
+    moving_high_accuracy: true,
+    quiet_hours_start: "12:30",
+    quiet_hours_end: "13:45",
+  });
+  $("quiet-end").value = "12:30";
+  $("device-config-form").dispatchEvent(
+    new window.Event("submit", { cancelable: true }),
+  );
   assert.match($("config-status").textContent, /不能相同/);
-  assert.equal((await (await realRequest(`/api/v1/devices/${sharedPoint.device_id}/config`)).json()).version, 2);
-  $("quiet-end").value="13:45";
-  intercept=(path,options,next) => options?.method === "PUT" && path.endsWith("/config") ? Promise.resolve(new Response("{}",{status:503})) : next(path,options);
-  $("device-config-form").dispatchEvent(new window.Event("submit", {cancelable:true}));
-  await until(() => $("config-status").textContent.includes("保存失败"), "failed save preserved input");
-  assert.equal($("moving-minutes").value,"3");
-  intercept=null;
-  const configGate=defer(); let configReady=false;
-  intercept=async(path,options,next)=>{
-    const response=await next(path,options);
-    if(options?.method==="PUT" && path.endsWith("/config")){configReady=true;await configGate.promise;}
+  assert.equal(
+    (
+      await (
+        await realRequest(`/api/v1/devices/${sharedPoint.device_id}/config`)
+      ).json()
+    ).version,
+    2,
+  );
+  $("quiet-end").value = "13:45";
+  intercept = (path, options, next) =>
+    options?.method === "PUT" && path.endsWith("/config")
+      ? Promise.resolve(new Response("{}", { status: 503 }))
+      : next(path, options);
+  $("device-config-form").dispatchEvent(
+    new window.Event("submit", { cancelable: true }),
+  );
+  await until(
+    () => $("config-status").textContent.includes("保存失败"),
+    "failed save preserved input",
+  );
+  assert.equal($("moving-minutes").value, "3");
+  intercept = null;
+  const configGate = defer();
+  let configReady = false;
+  intercept = async (path, options, next) => {
+    const response = await next(path, options);
+    if (options?.method === "PUT" && path.endsWith("/config")) {
+      configReady = true;
+      await configGate.promise;
+    }
     return response;
   };
-  $("moving-minutes").value="4";
-  $("device-config-form").dispatchEvent(new window.Event("submit",{cancelable:true}));
-  await until(()=>configReady,"save response held before offline");
+  $("moving-minutes").value = "4";
+  $("device-config-form").dispatchEvent(
+    new window.Event("submit", { cancelable: true }),
+  );
+  await until(() => configReady, "save response held before offline");
   window.dispatchEvent(new window.Event("offline"));
-  assert.equal($("moving-minutes").value,"4","offline event erased unsaved input");
-  assert.equal($("settings-view").hidden,false);
-  configGate.resolve(); await settle(); intercept=null;
+  assert.equal(
+    $("moving-minutes").value,
+    "4",
+    "offline event erased unsaved input",
+  );
+  assert.equal($("settings-view").hidden, false);
+  configGate.resolve();
+  await settle();
+  intercept = null;
   window.dispatchEvent(new window.Event("online"));
-  await until(()=>!$("refresh").disabled,"online config draft retained");
-  assert.equal($("moving-minutes").value,"4");
-  assert.equal($("settings-view").hidden,false);
+  await until(() => !$("refresh").disabled, "online config draft retained");
+  assert.equal($("moving-minutes").value, "4");
+  assert.equal($("settings-view").hidden, false);
   click("back-devices");
   $("devices-list").querySelector(".remove-member").click();
-  await until(() => $("devices-list").children.length===0 && !$("refresh").disabled, "removed only from second family");
-  assert.equal((await (await realRequest(`/api/v1/locations?family=${firstFamily}`)).json()).locations.length,1);
-  const selectFamily = (id) => { $("family-select").value=id; $("family-select").dispatchEvent(new window.Event("change")); };
-  const oldFamilyGate=defer(); let oldFamilyReady=false;
-  intercept=async(path,options,next) => {
-    const response=await next(path,options);
-    if(path===`/api/v1/locations?family=${firstFamily}`) {oldFamilyReady=true;await oldFamilyGate.promise;}
+  await until(
+    () => $("devices-list").children.length === 0 && !$("refresh").disabled,
+    "removed only from second family",
+  );
+  assert.equal(
+    (
+      await (
+        await realRequest(`/api/v1/locations?family=${firstFamily}`)
+      ).json()
+    ).locations.length,
+    1,
+  );
+  const selectFamily = (id) => {
+    $("family-select").value = id;
+    $("family-select").dispatchEvent(new window.Event("change"));
+  };
+  const oldFamilyGate = defer();
+  let oldFamilyReady = false;
+  intercept = async (path, options, next) => {
+    const response = await next(path, options);
+    if (path === `/api/v1/locations?family=${firstFamily}`) {
+      oldFamilyReady = true;
+      await oldFamilyGate.promise;
+    }
     return response;
   };
   selectFamily(firstFamily);
-  await until(()=>oldFamilyReady,"old family response held");
+  await until(() => oldFamilyReady, "old family response held");
   selectFamily(secondFamily);
-  await until(()=>!$("refresh").disabled,"new family response");
-  oldFamilyGate.resolve(); await settle(); intercept=null;
-  assert.equal(doc.querySelectorAll(".person-card").length,0,"late response leaked prior family");
-  let configLoads=0;
-  intercept=(path,options,next)=>{if(path==="/api/v1/web-config")configLoads++;return next(path,options);};
-  window.history.replaceState(null,"",`${base}/?family=missing`);
+  await until(() => !$("refresh").disabled, "new family response");
+  oldFamilyGate.resolve();
+  await settle();
+  intercept = null;
+  assert.equal(
+    doc.querySelectorAll(".person-card").length,
+    0,
+    "late response leaked prior family",
+  );
+  let configLoads = 0;
+  intercept = (path, options, next) => {
+    if (path === "/api/v1/web-config") configLoads++;
+    return next(path, options);
+  };
+  window.history.replaceState(null, "", `${base}/?family=missing`);
   window.dispatchEvent(new window.Event("popstate"));
-  await until(()=>$("app-message").textContent.includes("无权访问"),"invalid family rejected");
-  assert.equal(doc.querySelectorAll(".person-card").length,0);
-  assert.equal($("generate-pairing").disabled,true);
+  await until(
+    () => $("app-message").textContent.includes("无权访问"),
+    "invalid family rejected",
+  );
+  assert.equal(doc.querySelectorAll(".person-card").length, 0);
+  assert.equal($("generate-pairing").disabled, true);
   selectFamily(firstFamily);
-  await until(()=>!$("refresh").disabled && doc.querySelectorAll(".person-card").length===1,"return to default family");
-  await until(()=>configLoads>0,"map config restored after invalid family link");
-  intercept=null;
-  const mapGate=defer();let heldMapReady=false,mapRequests=0;
-  intercept=async(path,options,next)=>{
-    const response=await next(path,options);
-    if(path==="/api/v1/web-config") {
+  await until(
+    () =>
+      !$("refresh").disabled &&
+      doc.querySelectorAll(".person-card").length === 1,
+    "return to default family",
+  );
+  await until(
+    () => configLoads > 0,
+    "map config restored after invalid family link",
+  );
+  intercept = null;
+  const mapGate = defer();
+  let heldMapReady = false,
+    mapRequests = 0;
+  intercept = async (path, options, next) => {
+    const response = await next(path, options);
+    if (path === "/api/v1/web-config") {
       mapRequests++;
-      if(mapRequests===1){heldMapReady=true;await mapGate.promise;}
+      if (mapRequests === 1) {
+        heldMapReady = true;
+        await mapGate.promise;
+      }
     }
     return response;
   };
   window.dispatchEvent(new window.Event("popstate"));
-  await until(()=>heldMapReady,"map configuration response held");
+  await until(() => heldMapReady, "map configuration response held");
   selectFamily(secondFamily);
-  await until(()=>mapRequests>=2 && !$("refresh").disabled,"map configuration retried after family switch");
-  mapGate.resolve();await settle();intercept=null;
-  assert.equal(doc.querySelectorAll(".person-card").length,0);
+  await until(
+    () => mapRequests >= 2 && !$("refresh").disabled,
+    "map configuration retried after family switch",
+  );
+  mapGate.resolve();
+  await settle();
+  intercept = null;
+  assert.equal(doc.querySelectorAll(".person-card").length, 0);
   selectFamily(firstFamily);
-  await until(()=>!$("refresh").disabled && doc.querySelectorAll(".person-card").length===1,"restore family after map race");
-  const familiesGate=defer();let familiesReady=false,familyRequests=0;
-  intercept=async(path,options,next)=>{
-    const response=await next(path,options);
-    if(path==="/api/v1/families") {familyRequests++;if(familyRequests===1){familiesReady=true;await familiesGate.promise;}}
+  await until(
+    () =>
+      !$("refresh").disabled &&
+      doc.querySelectorAll(".person-card").length === 1,
+    "restore family after map race",
+  );
+  const familiesGate = defer();
+  let familiesReady = false,
+    familyRequests = 0;
+  intercept = async (path, options, next) => {
+    const response = await next(path, options);
+    if (path === "/api/v1/families") {
+      familyRequests++;
+      if (familyRequests === 1) {
+        familiesReady = true;
+        await familiesGate.promise;
+      }
+    }
     return response;
   };
   window.dispatchEvent(new window.Event("popstate"));
-  await until(()=>familiesReady,"family initialization held");
+  await until(() => familiesReady, "family initialization held");
   window.dispatchEvent(new window.Event("offline"));
-  familiesGate.resolve();await settle();
+  familiesGate.resolve();
+  await settle();
   window.dispatchEvent(new window.Event("online"));
-  await until(()=>familyRequests>=2 && !$("refresh").disabled && doc.querySelectorAll(".person-card").length===1,"family initialization resumes online");
-  intercept=null;
-  let initializationAttempts=0;
-  intercept=(path,options,next)=>{
-    if(path==="/api/v1/families" && ++initializationAttempts===1) return Promise.resolve(new Response("{}",{status:503}));
-    return next(path,options);
+  await until(
+    () =>
+      familyRequests >= 2 &&
+      !$("refresh").disabled &&
+      doc.querySelectorAll(".person-card").length === 1,
+    "family initialization resumes online",
+  );
+  intercept = null;
+  let initializationAttempts = 0;
+  intercept = (path, options, next) => {
+    if (path === "/api/v1/families" && ++initializationAttempts === 1)
+      return Promise.resolve(new Response("{}", { status: 503 }));
+    return next(path, options);
   };
   window.dispatchEvent(new window.Event("popstate"));
-  await until(()=>initializationAttempts===1 && !$("refresh").disabled && $("app-message").textContent.includes("暂时无法连接"),"family initialization temporary failure");
-  assert.equal(doc.querySelectorAll(".person-card").length,0);
+  await until(
+    () =>
+      initializationAttempts === 1 &&
+      !$("refresh").disabled &&
+      $("app-message").textContent.includes("暂时无法连接"),
+    "family initialization temporary failure",
+  );
+  assert.equal(doc.querySelectorAll(".person-card").length, 0);
   click("refresh");
-  await until(()=>initializationAttempts>=2 && !$("refresh").disabled && doc.querySelectorAll(".person-card").length===1,"manual refresh retries family initialization");
-  intercept=null;
-  console.log("PASS: family creation/link, membership reuse/removal, device settings including pause window, failed save, invalid link and late response isolation");
+  await until(
+    () =>
+      initializationAttempts >= 2 &&
+      !$("refresh").disabled &&
+      doc.querySelectorAll(".person-card").length === 1,
+    "manual refresh retries family initialization",
+  );
+  intercept = null;
+  console.log(
+    "PASS: family creation/link, membership reuse/removal, device settings including pause window, failed save, invalid link and late response isolation",
+  );
   // A lifecycle transition during failed logout must leave an actionable retry.
   const logoutGate = defer();
   let logoutReady = false;

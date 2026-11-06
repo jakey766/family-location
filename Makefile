@@ -9,7 +9,7 @@ export GOTOOLCHAIN := local
 export FAMILY_DB_PATH ?= $(ROOT)/data/family-location.db
 GOARCH ?= amd64
 
-.PHONY: prepare deps test test-race vet fmt build build-linux run smoke init-admin auth-smoke location-smoke location-demo web-deps web-test web-smoke web-browser-test web-browser-install
+.PHONY: prepare deps test test-race vet fmt build build-linux run smoke init-admin auth-smoke location-smoke family-smoke location-demo web-deps web-test web-smoke web-browser-test web-browser-install
 prepare:
 	@mkdir -p "$(GOCACHE)" "$(GOMODCACHE)" "$(GOPATH)" "$(GOTMPDIR)" "$(ROOT)/bin"
 
@@ -48,6 +48,9 @@ auth-smoke: build
 
 location-smoke: build
 	PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/scripts/location_smoke.py"
+
+family-smoke: build
+	PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/scripts/family_access_smoke.py"
 
 location-demo: build
 	PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/scripts/location_smoke.py" --demo

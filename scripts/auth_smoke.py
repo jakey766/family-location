@@ -138,7 +138,7 @@ def main():
         assert password.encode() not in result.stdout
         with sqlite3.connect(db) as connection:
             assert connection.execute("SELECT value FROM retained").fetchone() == ("kept",)
-            assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,), (4,)]
+            assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,), (4,), (5,)]
         with server(db, tmp / "first.log") as base:
             request(base, "GET", "/api/v1/auth/me", 401)
             session, headers = request(base, "POST", "/api/v1/auth/login", 200,

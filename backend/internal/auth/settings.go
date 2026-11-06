@@ -33,7 +33,7 @@ func ReadDeviceConfig(ctx context.Context, q ConfigReader, id string) (DeviceCon
 }
 func authorizeDeviceOwner(ctx context.Context, q ConfigReader, a Admin, id string) error {
 	var found int
-	err := q.QueryRowContext(ctx, `SELECT 1 FROM devices d JOIN family_admins fa ON fa.family_id=d.family_id WHERE d.id=? AND fa.user_id=? AND d.revoked_at IS NULL`, id, a.ID).Scan(&found)
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM devices d JOIN device_admins fa ON fa.device_id=d.id WHERE d.id=? AND fa.user_id=? AND d.revoked_at IS NULL`, id, a.ID).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}

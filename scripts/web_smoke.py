@@ -34,6 +34,10 @@ def main():
             result = subprocess.run(command, cwd=ROOT, env=env, timeout=180)
             if result.returncode:
                 raise SystemExit(result.returncode)
+            if '--browser' not in sys.argv:
+                result = subprocess.run(['node', '--experimental-vm-modules', str(ROOT / 'scripts' / 'web_family_dom_test.mjs')], cwd=ROOT, env=env, timeout=180)
+                if result.returncode:
+                    raise SystemExit(result.returncode)
         check_logs(tmp, sensitive)
     print('PASS: isolated real-backend web checks; processes and database cleaned')
 if __name__ == '__main__':

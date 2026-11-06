@@ -28,10 +28,19 @@ type webAPI struct {
 
 func registerWeb(mux *http.ServeMux, db *sql.DB, cfg WebConfig, client *http.Client) *webAPI {
 	a := &webAPI{auth: &authAPI{service: auth.New(db)}, config: cfg, client: client}
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { serveWebAsset(w, r, "index.html") })
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		target := "/admin"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+	})
+	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) { serveWebAsset(w, r, "index.html") })
+	mux.HandleFunc("GET /family", func(w http.ResponseWriter, r *http.Request) { serveWebAsset(w, r, "family.html") })
+	a.registerFamilyAccess(mux, location.New(db))
 	mux.HandleFunc("GET /assets/{name}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
-		if name == "index.html" {
+		if name == "index.html" || name == "family.html" {
 			http.NotFound(w, r)
 			return
 		}
@@ -47,6 +56,7 @@ func serveWebAsset(w http.ResponseWriter, r *http.Request, name string) {
 		"app.mjs": "text/javascript; charset=utf-8", "state.mjs": "text/javascript; charset=utf-8",
 		"map.mjs": "text/javascript; charset=utf-8", "icon.svg": "image/svg+xml",
 		"management.mjs": "text/javascript; charset=utf-8",
+		"family.html":    "text/html; charset=utf-8", "family.mjs": "text/javascript; charset=utf-8",
 	}[name]
 	if !ok {
 		http.NotFound(w, r)
@@ -70,6 +80,9 @@ func (a *webAPI) configuration(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.auth.admin(w, r, false); !ok {
 		return
 	}
+	a.writeConfiguration(w, r)
+}
+func (a *webAPI) writeConfiguration(w http.ResponseWriter, r *http.Request) {
 	key := ""
 	if a.config.mapEnabled() {
 		key = a.config.AMapJSKey
@@ -94,8 +107,11 @@ func (a *webAPI) proxy(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, 405, "method_not_allowed")
 		return
 	}
-	if _, ok := a.auth.admin(w, r, false); !ok {
-		return
+	if _, err := a.auth.service.AuthenticateSession(r.Context(), cookieToken(r)); err != nil {
+		if err = a.auth.service.AnyFamilyAccess(r.Context(), namedCookieToken(r, familyBrowserCookie)); err != nil {
+			authError(w, r, err)
+			return
+		}
 	}
 	if !a.config.mapEnabled() {
 		apiError(w, r, 503, "map_not_configured")

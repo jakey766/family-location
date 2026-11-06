@@ -17,7 +17,7 @@ import (
 func TestWebStaticResources(t *testing.T) {
 	h := New(testDB(t))
 	for _, tc := range []struct{ path, mime string }{
-		{"/", "text/html; charset=utf-8"}, {"/assets/styles.css", "text/css; charset=utf-8"},
+		{"/admin", "text/html; charset=utf-8"}, {"/assets/styles.css", "text/css; charset=utf-8"},
 		{"/assets/app.mjs", "text/javascript; charset=utf-8"}, {"/assets/state.mjs", "text/javascript; charset=utf-8"},
 		{"/assets/map.mjs", "text/javascript; charset=utf-8"}, {"/assets/icon.svg", "image/svg+xml"},
 	} {
@@ -217,5 +217,51 @@ func TestManagementAssetIsServed(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/assets/management.mjs", nil))
 	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
 		t.Fatalf("management module status=%d type=%s", w.Code, w.Header().Get("Content-Type"))
+	}
+}
+
+func TestFamilyMapGrantIsReadOnlyAndProxyKeepsWhitelist(t *testing.T) {
+	calls := 0
+	cfg := WebConfig{AMapJSKey: "public-map-key", AMapSecurityJSCode: "private-map-secret"}
+	c := newWebClient(t, cfg, webTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Scheme != "https" || r.URL.Host != "restapi.amap.com" || len(r.Header) != 0 {
+			t.Fatal("viewer proxy forwarded credentials or changed upstream")
+		}
+		if r.URL.Query().Get("key") != cfg.AMapJSKey || r.URL.Query().Get("jscode") != cfg.AMapSecurityJSCode {
+			t.Fatal("proxy keys overridden")
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	}))
+	w := c.request("POST", "/api/v1/families", `{"name":"map family","passcode":"0123456"}`, nil)
+	expectStatus(t, w, 201)
+	key := decodeMap(t, w.Body.Bytes())["public_id"].(string)
+	base := "/api/v1/family/" + key
+	viewer := &apiTestClient{t: t, h: c.h, ip: "192.0.2.220"}
+	expectStatus(t, viewer.request("GET", base+"/web-config", "", nil), 401)
+	expectStatus(t, viewer.request("POST", base+"/session", `{"passcode":"0123456"}`, map[string]string{"Origin": ""}), 403)
+	w = viewer.request("POST", base+"/session", `{"passcode":"0123456"}`, nil)
+	expectStatus(t, w, 200)
+	viewer.cookie = w.Result().Cookies()[0]
+	w = viewer.request("GET", base+"/web-config", "", nil)
+	expectStatus(t, w, 200)
+	if !strings.Contains(w.Body.String(), cfg.AMapJSKey) || strings.Contains(w.Body.String(), cfg.AMapSecurityJSCode) {
+		t.Fatal("map config projection")
+	}
+	for _, path := range []string{"/api/v1/web-config", "/api/v1/families", "/api/v1/devices/device/config", "/api/v1/locations?scope=owned"} {
+		expectStatus(t, viewer.request("GET", path, "", nil), 401)
+	}
+	expectStatus(t, viewer.request("POST", "/api/v1/pairing-codes", `{}`, nil), 401)
+	expectStatus(t, viewer.request("PUT", "/api/v1/device/location", `{}`, nil), 401)
+	expectStatus(t, viewer.request("GET", "/api/v1/family/missing/web-config", "", nil), 404)
+	expectStatus(t, viewer.request("GET", "/_AMapService/v3/ip?key=evil&jscode=evil", "", map[string]string{"Authorization": "Bearer private"}), 200)
+	for _, path := range []string{"/v3/../ip", "/v3/a%2fb", "/v3/https://evil.test"} {
+		expectStatus(t, viewer.request("GET", "/_AMapService"+path, "", nil), 400)
+	}
+	expectStatus(t, c.request("PUT", "/api/v1/families/"+key+"/passcode", `{}`, nil), 200)
+	expectStatus(t, viewer.request("GET", base+"/web-config", "", nil), 401)
+	expectStatus(t, viewer.request("GET", "/_AMapService/v3/ip", "", nil), 401)
+	if calls != 1 {
+		t.Fatal("unauthorized proxy reached upstream", calls)
 	}
 }

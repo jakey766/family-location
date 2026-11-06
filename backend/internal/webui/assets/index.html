@@ -16,7 +16,7 @@
   <body>
     <div class="shell">
       <header class="header">
-        <a class="brand" href="/" aria-label="家人位置首页"
+        <a class="brand" href="/admin" aria-label="家人位置首页"
           ><img src="/assets/icon.svg" alt="" width="38" height="38" /><span
             >家人位置<small>彼此安心，自在出发</small></span
           ></a
@@ -43,7 +43,7 @@
           </div>
           <form id="login-form" class="login-card">
             <span class="section-number">WELCOME HOME</span>
-            <h2>登录你的家庭</h2>
+            <h2>登录管理后台</h2>
             <p class="muted">使用已创建的管理员账号</p>
             <label for="login-username">用户名</label
             ><input
@@ -88,11 +88,15 @@
             </button>
           </div>
           <section class="family-toolbar" aria-label="当前家庭">
-            <label for="family-select">当前家庭</label>
+            <label for="family-select">查看范围</label>
             <select id="family-select" aria-label="选择家庭"></select>
-            <button id="copy-family" type="button" class="secondary">复制家庭链接</button>
+            <button id="copy-family" type="button" class="secondary">
+              复制家庭链接
+            </button>
             <input id="family-link" readonly aria-label="当前家庭链接" />
-            <p id="family-link-status" class="footnote" role="status">查看链接仍需登录有权限的账号。</p>
+            <p id="family-link-status" class="footnote" role="status">
+              选择家庭后可分享查看链接。
+            </p>
           </section>
           <nav class="tabs" aria-label="页面切换">
             <button id="tab-locations" aria-current="page" type="button">
@@ -154,50 +158,127 @@
           <section id="devices-view" hidden aria-label="设备管理">
             <div class="management-layout">
               <div class="management-sidebar">
-              <form id="create-family-form" class="pair-card">
-                <h2>创建家庭</h2>
-                <label for="family-name">家庭名称</label>
-                <input id="family-name" required maxlength="80" placeholder="例如：我的家、父母家" />
-                <button id="create-family" type="submit" class="primary">创建家庭</button>
-              </form>
-              <section class="pair-card">
-                <span class="section-number">BRING FAMILY CLOSER</span>
-                <h2>添加一台家庭设备</h2>
-                <p class="muted">
-                  生成配对信息，在家人的安卓手机上完成配对。配对后，由家人主动开启位置共享。
-                </p>
-                <button id="generate-pairing" class="primary" type="button">
-                  生成配对信息 <span aria-hidden="true">＋</span>
-                </button>
-                <p class="footnote">
-                  配对信息 10 分钟内有效，仅能使用一次。重新生成会使旧信息失效。
-                </p>
-                <div id="pairing-result" hidden>
-                  <div class="pairing-heading">
-                    <span>一次性配对码</span
-                    ><span id="pairing-countdown"></span>
-                  </div>
-                  <strong id="pairing-code" class="pairing-code"></strong
-                  ><label for="pairing-text">完整配对信息</label
-                  ><textarea
-                    id="pairing-text"
-                    readonly
-                    rows="5"
-                    spellcheck="false"
-                    aria-label="完整配对信息"
-                  ></textarea
-                  ><button id="copy-pairing" class="secondary" type="button">
-                    复制配对信息
+                <form id="create-family-form" class="pair-card">
+                  <h2>创建家庭</h2>
+                  <label for="family-name">家庭名称</label>
+                  <input
+                    id="family-name"
+                    required
+                    maxlength="80"
+                    placeholder="例如：我的家、父母家"
+                  />
+                  <label for="create-family-passcode"
+                    >7 位数字口令（留空自动生成）</label
+                  >
+                  <input
+                    id="create-family-passcode"
+                    inputmode="numeric"
+                    pattern="[0-9]{7}"
+                    minlength="7"
+                    maxlength="7"
+                    autocomplete="off"
+                    placeholder="自动生成，也可手工指定"
+                  />
+                  <button id="create-family" type="submit" class="primary">
+                    创建家庭
                   </button>
-                  <p id="copy-status" class="footnote" role="status">
-                    只分享给准备配对的家人。
+                </form>
+                <section id="family-settings" class="pair-card" hidden>
+                  <h2>管理当前家庭</h2>
+                  <form id="rename-family-form">
+                    <label for="rename-family-name">家庭名称</label>
+                    <input id="rename-family-name" required maxlength="80" />
+                    <button id="rename-family" class="secondary" type="submit">
+                      保存名称
+                    </button>
+                  </form>
+                  <p
+                    id="family-passcode-status"
+                    class="footnote"
+                    role="status"
+                  ></p>
+                  <form id="family-passcode-form">
+                    <label for="family-passcode">设置新的 7 位数字口令</label>
+                    <input
+                      id="family-passcode"
+                      inputmode="numeric"
+                      pattern="[0-9]{7}"
+                      minlength="7"
+                      maxlength="7"
+                      autocomplete="off"
+                      required
+                    />
+                    <button
+                      id="save-family-passcode"
+                      class="secondary"
+                      type="submit"
+                    >
+                      设置口令
+                    </button>
+                  </form>
+                  <button
+                    id="regenerate-passcode"
+                    class="secondary"
+                    type="button"
+                  >
+                    自动生成新口令
+                  </button>
+                  <div id="passcode-result" hidden>
+                    <label for="current-passcode">本次设置的口令</label
+                    ><input id="current-passcode" readonly autocomplete="off" />
+                    <button id="copy-passcode" class="secondary" type="button">
+                      复制口令
+                    </button>
+                    <p
+                      id="passcode-copy-status"
+                      class="footnote"
+                      role="status"
+                    ></p>
+                  </div>
+                  <button id="delete-family" class="danger" type="button">
+                    删除当前家庭
+                  </button>
+                </section>
+                <section class="pair-card">
+                  <span class="section-number">BRING FAMILY CLOSER</span>
+                  <h2>添加一台家庭设备</h2>
+                  <p class="muted">
+                    生成配对信息，在家人的安卓手机上完成配对。配对后，由家人主动开启位置共享。
                   </p>
-                </div>
-              </section>
+                  <p id="pairing-family-hint" class="footnote"></p>
+                  <button id="generate-pairing" class="primary" type="button">
+                    生成配对信息 <span aria-hidden="true">＋</span>
+                  </button>
+                  <p class="footnote">
+                    配对信息 10
+                    分钟内有效，仅能使用一次。重新生成会使旧信息失效。
+                  </p>
+                  <div id="pairing-result" hidden>
+                    <div class="pairing-heading">
+                      <span>一次性配对码</span
+                      ><span id="pairing-countdown"></span>
+                    </div>
+                    <strong id="pairing-code" class="pairing-code"></strong
+                    ><label for="pairing-text">完整配对信息</label
+                    ><textarea
+                      id="pairing-text"
+                      readonly
+                      rows="5"
+                      spellcheck="false"
+                      aria-label="完整配对信息"
+                    ></textarea
+                    ><button id="copy-pairing" class="secondary" type="button">
+                      复制配对信息
+                    </button>
+                    <p id="copy-status" class="footnote" role="status">
+                      只分享给准备配对的家人。
+                    </p>
+                  </div>
+                </section>
               </div>
               <section class="devices-card">
                 <div class="section-heading">
-                  <h2>当前家庭成员</h2>
+                  <h2 id="devices-heading">所有设备</h2>
                   <span class="muted">由你管理</span>
                 </div>
                 <div id="devices-list"></div>
@@ -209,30 +290,61 @@
                 </p>
               </section>
             </div>
-            <section class="devices-card owned-card" aria-label="所有受管理设备">
+            <section
+              id="owned-devices-card"
+              class="devices-card owned-card"
+              aria-label="所有受管理设备"
+            >
               <h2>所有受管理设备</h2>
-              <p class="footnote">可将已配对设备加入当前家庭。同一设备在不同家庭共用一份配置。</p>
+              <p class="footnote">
+                可将已配对设备加入当前家庭。同一设备在不同家庭共用一份配置。
+              </p>
               <div id="owned-devices-list"></div>
             </section>
           </section>
           <section id="settings-view" hidden aria-label="设备配置">
             <form id="device-config-form" class="settings-card">
-              <button id="back-devices" type="button" class="text-button">← 返回设备管理</button>
+              <button id="back-devices" type="button" class="text-button">
+                ← 返回设备管理
+              </button>
               <h2 id="config-device-name">设备配置</h2>
               <p id="config-device-families" class="footnote"></p>
               <p class="footnote">修改会影响这台设备在所有家庭中的上报策略。</p>
               <fieldset id="config-fields" disabled>
                 <label for="moving-minutes">移动上报间隔（分钟）</label>
-                <input id="moving-minutes" type="number" min="1" max="60" step="1" required />
+                <input
+                  id="moving-minutes"
+                  type="number"
+                  min="1"
+                  max="60"
+                  step="1"
+                  required
+                />
                 <label for="stationary-minutes">静止上报间隔（分钟）</label>
-                <input id="stationary-minutes" type="number" min="1" max="60" step="1" required />
-                <label class="check-label" for="moving-high-accuracy"><input id="moving-high-accuracy" type="checkbox" />移动时使用高精度</label>
+                <input
+                  id="stationary-minutes"
+                  type="number"
+                  min="1"
+                  max="60"
+                  step="1"
+                  required
+                />
+                <label class="check-label" for="moving-high-accuracy"
+                  ><input
+                    id="moving-high-accuracy"
+                    type="checkbox"
+                  />移动时使用高精度</label
+                >
                 <label for="quiet-start">不采集、不上报：开始时间</label>
                 <input id="quiet-start" type="time" required />
                 <label for="quiet-end">不采集、不上报：结束时间</label>
                 <input id="quiet-end" type="time" required />
-                <p class="footnote">按设备本地时间每天执行，支持跨午夜；开始与结束不能相同。静止间隔不得短于移动间隔。</p>
-                <button id="save-device-config" class="primary" type="submit">保存设备配置</button>
+                <p class="footnote">
+                  按设备本地时间每天执行，支持跨午夜；开始与结束不能相同。静止间隔不得短于移动间隔。
+                </p>
+                <button id="save-device-config" class="primary" type="submit">
+                  保存设备配置
+                </button>
               </fieldset>
               <p id="config-status" class="message" role="status"></p>
             </form>
@@ -256,6 +368,24 @@
             取消</button
           ><button id="confirm-revoke" class="danger" type="button">
             确认撤销
+          </button>
+        </div>
+      </section>
+    </div>
+    <div id="family-confirm-overlay" class="modal-overlay" hidden>
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="family-delete-title"
+        class="confirm-card"
+      >
+        <h2 id="family-delete-title">删除这个家庭？</h2>
+        <p id="family-delete-description"></p>
+        <div class="confirm-actions">
+          <button id="cancel-delete-family" class="secondary" type="button">
+            取消</button
+          ><button id="confirm-delete-family" class="danger" type="button">
+            确认删除家庭
           </button>
         </div>
       </section>

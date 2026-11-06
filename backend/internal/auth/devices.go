@@ -13,7 +13,7 @@ import (
 
 func (s *Service) authorizeAdmin(ctx context.Context, a Admin) error {
 	var found int
-	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM family_admins WHERE user_id=? AND family_id=?", a.ID, a.FamilyID).Scan(&found)
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM users WHERE id=?", a.ID).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthorized
 	}
@@ -21,6 +21,15 @@ func (s *Service) authorizeAdmin(ctx context.Context, a Admin) error {
 		return fmt.Errorf("authorize admin: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) authorizeFamily(ctx context.Context, a Admin) error {
+	var found int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM family_admins fa JOIN families f ON f.id=fa.family_id WHERE fa.user_id=? AND fa.family_id=? AND f.deleted_at IS NULL`, a.ID, a.FamilyID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // Pairing IDs have 60 random bits; device and session tokens retain 256 bits.
@@ -37,7 +46,7 @@ func randomPairingID() (string, error) {
 }
 
 func (s *Service) CreatePairing(ctx context.Context, a Admin) (Pairing, error) {
-	if err := s.authorizeAdmin(ctx, a); err != nil {
+	if err := s.authorizeFamily(ctx, a); err != nil {
 		return Pairing{}, err
 	}
 	number, err := rand.Int(rand.Reader, big.NewInt(100000000))
@@ -50,6 +59,13 @@ func (s *Service) CreatePairing(ctx context.Context, a Admin) (Pairing, error) {
 		return Pairing{}, fmt.Errorf("begin pairing: %w", err)
 	}
 	defer tx.Rollback()
+	var available int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM families f JOIN family_admins fa ON fa.family_id=f.id WHERE f.id=? AND fa.user_id=? AND f.deleted_at IS NULL`, a.FamilyID, a.ID).Scan(&available); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Pairing{}, ErrNotFound
+		}
+		return Pairing{}, err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM pairing_codes WHERE expires_at<=? OR family_id=?", s.now().Unix(), a.FamilyID); err != nil {
 		return Pairing{}, fmt.Errorf("clean pairings: %w", err)
 	}
@@ -140,6 +156,9 @@ func (s *Service) Pair(ctx context.Context, pairingID, code, name, ip string) (P
 	if _, err := tx.ExecContext(ctx, "INSERT INTO family_devices(family_id,device_id) VALUES (?,?)", familyID, id); err != nil {
 		return PairedDevice{}, err
 	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO device_admins(device_id,user_id) SELECT ?,user_id FROM family_admins WHERE family_id=?", id, familyID); err != nil {
+		return PairedDevice{}, err
+	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO device_configs(device_id) VALUES (?)", id); err != nil {
 		return PairedDevice{}, err
 	}
@@ -149,7 +168,7 @@ func (s *Service) Pair(ctx context.Context, pairingID, code, name, ip string) (P
 	return PairedDevice{Device: Device{ID: id, FamilyID: familyID, Name: name, CreatedAt: time.Unix(now, 0).UTC()}, Token: token}, nil
 }
 func (s *Service) Devices(ctx context.Context, a Admin) ([]Device, error) {
-	if err := s.authorizeAdmin(ctx, a); err != nil {
+	if err := s.authorizeFamily(ctx, a); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, "SELECT d.id,d.family_id,d.name,d.created_at,d.revoked_at FROM devices d JOIN family_devices fd ON fd.device_id=d.id WHERE fd.family_id=? ORDER BY d.created_at,d.id", a.FamilyID)
@@ -179,7 +198,7 @@ func (s *Service) RevokeDevice(ctx context.Context, a Admin, id string) error {
 		return fmt.Errorf("begin device revocation: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "UPDATE devices SET revoked_at=COALESCE(revoked_at,?),sharing_session_id=NULL,last_sequence=0,last_captured_at=NULL WHERE id=? AND family_id IN (SELECT family_id FROM family_admins WHERE user_id=?)", s.now().Unix(), id, a.ID)
+	result, err := tx.ExecContext(ctx, "UPDATE devices SET revoked_at=COALESCE(revoked_at,?),sharing_session_id=NULL,last_sequence=0,last_captured_at=NULL WHERE id=? AND id IN (SELECT device_id FROM device_admins WHERE user_id=?)", s.now().Unix(), id, a.ID)
 	if err != nil {
 		return fmt.Errorf("revoke device: %w", err)
 	}

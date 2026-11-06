@@ -72,13 +72,13 @@ def main():
         db = tmp / "data" / "family.db"
         boot_and_stop(db, tmp / "first.log")
         with sqlite3.connect(db) as connection:
-            assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,), (4,)]
+            assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,), (4,), (5,)]
             connection.execute("CREATE TABLE smoke_persistence(value TEXT)")
             connection.execute("INSERT INTO smoke_persistence VALUES ('kept')")
         boot_and_stop(db, tmp / "second.log")
         with sqlite3.connect(db) as connection:
             assert connection.execute("SELECT value FROM smoke_persistence").fetchone() == ("kept",)
-            assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone() == (4,)
+            assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone() == (5,)
         expect_startup_failure("127.0.0.1:8080", tmp)
         with socket.socket() as occupied:
             occupied.bind(("127.0.0.1", 0))

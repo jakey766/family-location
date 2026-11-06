@@ -87,11 +87,21 @@ func (a *locationAPI) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	selected, ok := a.auth.selectedAdmin(w, r, session.User)
+	owned, ok := ownedScope(w, r)
 	if !ok {
 		return
 	}
-	result, e := a.service.List(r.Context(), selected)
+	var result location.Snapshot
+	var e error
+	if owned {
+		result, e = a.service.ListOwned(r.Context(), session.User)
+	} else {
+		selected, ok := a.auth.selectedAdmin(w, r, session.User)
+		if !ok {
+			return
+		}
+		result, e = a.service.List(r.Context(), selected)
+	}
 	if e != nil {
 		locationError(w, r, e)
 		return

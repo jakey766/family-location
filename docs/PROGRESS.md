@@ -1,8 +1,26 @@
 # 项目进度
 
-更新日期：2026-10-30。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)、[第四步计划](superpowers/plans/2026-10-15-web-plan.md)及[第五步计划](superpowers/plans/2026-10-18-android-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
+更新日期：2026-11-06。需求以 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) 为准，实施任务见[整体计划](superpowers/plans/2026-10-10-family-location-plan.md)、[第二步计划](superpowers/plans/2026-10-12-auth-pairing-plan.md)、[第三步计划](superpowers/plans/2026-10-15-location-plan.md)、[第四步计划](superpowers/plans/2026-10-15-web-plan.md)及[第五步计划](superpowers/plans/2026-10-18-android-plan.md)。本文件记录事实，不将后续方案视为已交付能力。
 
 ## 当前状态
+
+2026-11-06（管理页与家庭口令查看，本地实现与验证完成，未部署）：已实现 `/admin` 管理入口与 `/family?key={标识}` 独立只读入口，原根路径及旧家庭参数兼容跳转管理页。管理员可创建/改名/删除家庭、生成或手工设置 7 位口令、复制链接、按所有设备或指定家庭查看位置/信息、配置设备及彻底删除已撤销设备。未加入家庭的设备仍可查看位置、管理和继续上报；删除最后一个家庭后管理员仍能登录、创建家庭并管理设备。
+
+SQLite 事务迁移至 schema v5，将旧设备管理权限迁移到独立 `device_admins`；家庭删除清理对外信息、成员、配对与查看授权，通过内部删除标记保留设备历史家庭 ID，旧设备凭证、配置、共享会话与位置不受影响。家庭口令按带盐 Argon2 哈希保存，仅生成/设置成功时返回一次；旧/CLI 家庭需首次设置。家庭浏览器凭证与管理员分离，每家庭从验证起固定七天、不随查询续期，多家庭独立计时、重启保留。改口令/删家庭使原授权在下一次请求失效；只读快照在同一事务中鉴权与读取，无法用于管理或上报。
+
+实际验证：`make test vet test-race smoke auth-smoke location-smoke family-smoke web-smoke` 全部通过，完整日志 `.cache/tmp/admin-family-final-checks.log`。最终正文取消修复后再次 `make web-smoke` 通过，日志 `.cache/tmp/admin-family-final-web.log`，包含 10 项 Node 时间/地图测试、原管理页真实后端 DOM 联调、新家庭页模拟边界与真实独立 Cookie 联调。Go 最终检查部分命中缓存，最初完整实际 race 日志为 `.cache/tmp/backend-access-checks.log`，不宣称所有包每次均重跑。构建产物 `bin/family-location` 已更新。
+
+红绿与审阅：首批测试先复现缺少口令字段、重复 scope 未拒绝和旧入口；新增 `passcode:null` 拒绝用例先失败后修复。独立需求/质量审阅发现并修复手动/随机口令并发导致当次展示过时、地图 SDK 失败后不能重试、响应正文挂起失去取消/超时控制，均补失败→通过回归；另验证固定截止到期时离线也清屏、后台迟到响应不恢复位置。迁移覆盖保存/回滚/原权限范围；HTTP 覆盖跨账号、删除所有家庭后的上报和位置、改密/退出与多家庭隔离、purge 清理及旧凭证无效、地图代理白名单与不转发凭证。
+
+浏览器检查实际尝试 `WEB_TEST_BROWSER=chromium WEB_TEST_CHROME_CHANNEL=chrome make web-browser-test`，Chrome 在 launch 阶段 SIGABRT，日志含 `kill EPERM`，尚未进入页面；证据 `.cache/tmp/web-family-browser.log`。脚本已包含 390px 管理/独立家庭页，但不能据此称渲染、真实高德或 iPhone Safari 已通过。Node 仍有 VM Modules 实验提示。此次未修改 Android，无新 APK；未安装、远程部署、操作正式数据库或执行 git add/commit，工作区原有 Android 未跟踪文件保持不动。
+
+启动：停止旧服务后在项目根目录 `make run`，访问 `http://127.0.0.1:8080/admin`。服务器按 [DEPLOYMENT.md](DEPLOYMENT.md) 先备份再构建重启；旧家庭首次分享前设置口令，再复制新家庭链接并单独分享口令。下一步以未登录管理员的浏览器及 iPhone Safari 验证家庭页、复制/触控/后台恢复，并核对现有真实设备继续上报；构建与模拟位置不替代实际部署或真机验收。以下同日实施中和需求记录均为历史。
+
+2026-11-06（实施中）：用户已批准完整方案并要求实现。已写[实施计划](superpowers/plans/2026-11-06-admin-family-access.md)，后端与 H5 分工开发；新增隔离 HTTP `make family-smoke` 已通过口令、多家庭独立授权、重启、删除最后家庭后孤立设备上报/查看/配置及已撤销设备彻底删除。当前仍在完善前端并发口令操作和地图重试回归、独立审阅及完整检查，不能视为交付完成。未修改 Android、未构建 APK、未部署或安装；现有正式数据未参与验证。
+
+2026-11-06（管理页与家庭查看页，需求已澄清、完整设计待审阅，未实施）：用户确认 `/admin` 管理入口、`/family?key={标识}` 口令只读访问、自动生成且可手动修改的 7 位数字口令、7 天免输入及改口令后原凭证失效。管理视图支持所有设备或指定家庭，未加入家庭的设备仍可查看位置和管理；删除家庭不删除设备或影响上报，最后一个家庭也可删除。已撤销设备可彻底删除，未撤销设备必须先撤销。
+
+已核对 schema v4、管理员认证、设备归属、位置查询、地图代理与 H5，发现现有管理权限依赖设备最初家庭，需要在实现中解耦。已同步项目背景并形成[完整设计草案](superpowers/specs/2026-11-06-admin-family-access-design.md)，补充旧家庭口令初始化、固定 7 天期限、独立只读权限及升级兼容规则，尚待用户整体审阅。仅修改文档，未运行功能测试、未修改 Android 或构建 APK、未部署。现有启动仍为 `make run`，实际运行入口仍为 `/`；`/admin` 与 `/family` 尚未实现。下一步审阅设计后编写实施计划、分阶段实现和验证。
 
 2026-10-30（多家庭与设备配置，0.6.0 已构建，未部署/安装）：已完成用户确认的升级代码。SQLite 事务迁移至 schema v4，保留已有账号、设备凭证、配对、共享会话及最后位置；新增家庭标识、管理员多家庭授权和设备多家庭成员关系。H5 可创建/选择家庭、复制含标识链接、复用已有设备、单家庭移出和全局撤销；仍需有权限的管理员登录。移出不会停止设备或影响其他家庭，无家庭成员关系的设备仍可在“所有受管理设备”管理。
 
@@ -292,7 +310,7 @@ cd /Users/jiangkunpeng/dev/jk_space/family-location
 make run
 ```
 
-先停止仍在运行的旧服务；已有管理员只需 `make run`，启动会自动迁移至 schema v4。首次使用才运行 `make init-admin`，已有用户名初始化会报错且不覆盖账户。`make init-admin` 交互询问用户名、家庭和密码，密码不回显。浏览器打开 `http://127.0.0.1:8080/` 即可登录。网页和高德配置见 [WEB_UI.md](WEB_UI.md)，认证见 [AUTH_API.md](AUTH_API.md)，共享接口见 [LOCATION_API.md](LOCATION_API.md)。
+先停止仍在运行的旧服务；已有管理员只需 `make run`，启动会自动迁移至 schema v5。首次使用才运行 `make init-admin`，已有用户名初始化会报错且不覆盖账户。`make init-admin` 交互询问用户名、家庭和密码，密码不回显。浏览器打开 `http://127.0.0.1:8080/admin` 即可登录。网页和高德配置见 [WEB_UI.md](WEB_UI.md)，认证见 [AUTH_API.md](AUTH_API.md)，共享接口见 [LOCATION_API.md](LOCATION_API.md)。
 
 在另一终端检查：
 
@@ -312,6 +330,8 @@ curl -i http://127.0.0.1:8080/readyz
 - 公网服务器部署、HTTP/IP 端到端联调未执行；HTTPS 按已确认范围留待后续。
 
 ## 下一步
+
+2026-11-06：按 [DEPLOYMENT.md](DEPLOYMENT.md) 先备份再更新 Go/H5 到 schema v5，访问 `/admin`，为旧家庭首次设置口令后分享 `/family?key=...`。分别验证所有设备/指定家庭、无家庭设备、家庭独立口令与已撤销设备删除，完成 iPhone Safari 与真实地图验收。本轮没有 Android 改动，无需因本轮页面升级重新安装 APK；此前 Android 0.6.0 的安装及硬件验收继续单独执行。以下旧版本交付安排保留为历史。
 
 2026-10-30：优先按 [DEPLOYMENT.md](DEPLOYMENT.md) 备份并更新后端到 schema v4，刷新 H5；覆盖安装本轮 `bin/family-location-0.6.0-release.apk`，保持既有配对。创建第二个家庭并复用设备，确认各链接只显示对应成员；修改设备间隔、高精度及暂停时段，在下一次成功上报后核对 App 有效配置，分别验证同日/跨夜暂停、锁屏、重启和主动停止。以下旧版本安装安排保留为历史，不再作为当前交付版本。
 

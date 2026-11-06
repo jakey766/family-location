@@ -1,7 +1,8 @@
 package storage
 
-// The original devices.family_id remains the immutable management family. The
-// family_devices join table determines visibility independently of ownership.
+// Version 4 used the original devices.family_id as its management family.
+// Version 5 copies that authorization into device_admins before allowing deletion.
+// family_devices determines visibility independently of ownership.
 const familySchema = `
 ALTER TABLE families ADD COLUMN public_id TEXT;
 UPDATE families SET public_id=lower(hex(randomblob(12)));

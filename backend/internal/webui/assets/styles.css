@@ -889,3 +889,16 @@ select { font:inherit; min-height:44px; border:1px solid var(--line); border-rad
 .check-label { display:flex; align-items:center; gap:12px; min-height:44px; }
 .check-label input { width:22px; height:22px; }
 @media(max-width:680px) { .management-sidebar { width:100%; } .settings-card { padding:20px; } }
+
+/* Shared cards stay usable on narrow Safari viewports and with long family names. */
+.viewer-auth { max-width:460px; margin:48px auto; }
+.viewer-auth h1 { font-size:26px; margin:16px 0; }
+.viewer-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+#family-name { overflow-wrap:anywhere; }
+#family-settings form { margin:20px 0; }
+#family-settings button { margin-top:12px; }
+#family-settings input { max-width:100%; }
+#family-settings .danger { margin-top:24px; }
+#current-passcode { font-size:24px; letter-spacing:5px; }
+.person-card time { display:block; margin:8px 0; overflow-wrap:anywhere; }
+@media(max-width:680px) { .viewer-auth { margin:24px auto; } .viewer-actions { max-width:130px; } }
